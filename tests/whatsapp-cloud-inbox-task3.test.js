@@ -15,6 +15,15 @@ import {
   queueCounterItems,
 } from '../pedidos/whatsapp-cloud-ui.js';
 
+function createReadTestRouter(options = {}) {
+  const query = options.query || (async () => []);
+  return createWhatsAppCloudInboxAdminRouter({
+    ...options,
+    query,
+    sensitiveReadRunner: (_req, _empresaId, work) => work(query),
+  });
+}
+
 test('guard de listado exige generation, tenant, revisión y snapshot exacto de filtros', () => {
   const started = {
     generation: 7,
@@ -66,7 +75,7 @@ test('Task 4 trata un número canónico fuera de int4 sólo como teléfono', asy
   const calls = [];
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createReadTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) { req.user = { uid: 41, role: 'admin', empresa_id: 7 }; next(); },
     async query(sql, params, options) { calls.push({ sql, params, options }); return []; },
@@ -97,7 +106,7 @@ test('Task 4 acepta sólo sufijos telefónicos de 6 a 10 dígitos sin truncarlos
     const calls = [];
     const app = express();
     app.use(express.json());
-    app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    app.use('/api/admin/whatsapp-cloud', createReadTestRouter({
       canonicalOrigin: 'https://admin.pedivoy.test',
       withAuth(req, _res, next) { req.user = { uid: 41, role: 'admin', empresa_id: 7 }; next(); },
       async query(sql, params, options) { calls.push({ sql, params, options }); return []; },
@@ -121,7 +130,7 @@ test('Task 4 contexto usa una sola sentencia sensible y nunca consulta pedidos t
   const calls = [];
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createReadTestRouter({
     withAuth(req, _res, next) { req.user = { uid: 41, role: 'admin', empresa_id: 7 }; next(); },
     async query(sql, params, options) {
       calls.push({ sql, params, options });
@@ -172,7 +181,7 @@ test('listado valida filtros operativos y deriva usuario autenticado para unread
   const calls = [];
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createReadTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 41, role: 'admin', empresa_id: 7 };
@@ -207,7 +216,7 @@ test('listado valida filtros operativos y deriva usuario autenticado para unread
 test('Task 4 super exige empresa explícita canónica en body de búsqueda y query de contexto', async () => {
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createReadTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) { req.user = { uid: 41, role: 'super', empresa_id: null }; next(); },
     async query() { return []; },

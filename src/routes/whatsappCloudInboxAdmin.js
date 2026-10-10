@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { query as defaultQuery, pool as defaultPool } from '../db.js';
+import { query as defaultQuery, pool as defaultPool, withTransaction as defaultWithTransaction } from '../db.js';
 import { withAuth as defaultWithAuth } from '../services.js';
 import {
   enqueueWppOutboxCorrelatedReply,
@@ -13,6 +13,7 @@ import {
   getCloudConversationContext,
   listCloudConversationMessages,
   listCloudConversations,
+  lockAndRevalidateReadActor,
   lockAndRevalidateMutationActor,
   markCloudConversationRead,
   matchesCloudReplyCorrelation,
@@ -207,6 +208,20 @@ function conversationRevalidateIds(query) {
   return ids;
 }
 
+function validConversationSearchHeader(req) {
+  if (Object.keys(req.query || {}).length !== 0) return null;
+  const encoded = req.get('x-pedivoy-inbox-search');
+  if (typeof encoded !== 'string' || encoded.length < 1 || encoded.length > 4096
+    || !/^[A-Za-z0-9_-]+$/.test(encoded)) return null;
+  try {
+    const decoded = Buffer.from(encoded, 'base64url').toString('utf8');
+    if (!decoded || Buffer.byteLength(decoded, 'utf8') > 3072) return null;
+    return JSON.parse(decoded);
+  } catch {
+    return null;
+  }
+}
+
 function validConversationSearch(req) {
   if (Object.keys(req.query || {}).length !== 0) return null;
   const body = req.body;
@@ -262,6 +277,8 @@ function validContextTenant(req) {
 export function createWhatsAppCloudInboxAdminRouter({
   query = defaultQuery,
   pool = defaultPool,
+  withTransaction = defaultWithTransaction,
+  sensitiveReadRunner = null,
   withAuth = defaultWithAuth,
   enqueueReply = enqueueWppOutboxCorrelatedReply,
   canonicalOrigin,
@@ -272,6 +289,15 @@ export function createWhatsAppCloudInboxAdminRouter({
     res.set('Pragma', 'no-cache');
     next();
   });
+  const secureSensitiveRead = (req, empresaId, work) => withTransaction(async (txQuery, client) => {
+    await lockAndRevalidateReadActor(client, {
+      usuarioId: pgInt4Number(req.user?.uid),
+      actorRole: req.user?.role,
+      empresaId,
+    });
+    return work(txQuery);
+  }, { pool });
+  const sensitiveRead = sensitiveReadRunner || secureSensitiveRead;
   router.get('/conversations', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     const empresaId = resolveTenant(req);
     const usuarioId = pgInt4Number(req.user?.uid);
@@ -284,10 +310,32 @@ export function createWhatsAppCloudInboxAdminRouter({
     const revalidateIds = conversationRevalidateIds(req.query);
     if (!revalidateIds) return res.status(400).json({ error: 'revalidate_ids_invalid' });
     try {
-      const result = await listCloudConversations({ query, empresaId, usuarioId, ...page, ...filters, revalidateIds });
+      const result = await sensitiveRead(req, empresaId, txQuery => listCloudConversations({
+        query: txQuery, empresaId, usuarioId, ...page, ...filters, revalidateIds,
+      }));
       return res.json(result);
     } catch (error) {
+      if (error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') return res.status(403).json({ error: 'actor_forbidden' });
       if (isInvalidArgument(error)) return res.status(400).json({ error: 'pagination_invalid' });
+      return res.status(500).json({ error: 'cloud_inbox_unavailable' });
+    }
+  });
+  router.get('/conversations/search', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
+    const body = validConversationSearchHeader(req);
+    const search = body ? validConversationSearch({ query: {}, body }) : null;
+    if (!search) return res.status(400).json({ error: 'search_invalid' });
+    const empresaId = resolveSearchTenant({ user: req.user, body });
+    const usuarioId = pgInt4Number(req.user?.uid);
+    if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!usuarioId) return res.status(403).json({ error: 'Acceso denegado' });
+    try {
+      const result = await sensitiveRead(req, empresaId, txQuery => searchCloudConversations({
+        query: txQuery, empresaId, usuarioId, ...search,
+      }));
+      return res.json(result);
+    } catch (error) {
+      if (error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') return res.status(403).json({ error: 'actor_forbidden' });
+      if (isInvalidArgument(error)) return res.status(400).json({ error: 'search_invalid' });
       return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
   });
@@ -299,46 +347,55 @@ export function createWhatsAppCloudInboxAdminRouter({
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
     if (!usuarioId) return res.status(403).json({ error: 'Acceso denegado' });
     try {
-      const result = await searchCloudConversations({ query, empresaId, usuarioId, ...search });
+      const result = await sensitiveRead(req, empresaId, txQuery => searchCloudConversations({
+        query: txQuery, empresaId, usuarioId, ...search,
+      }));
       return res.json(result);
     } catch (error) {
+      if (error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') return res.status(403).json({ error: 'actor_forbidden' });
       if (isInvalidArgument(error)) return res.status(400).json({ error: 'search_invalid' });
       return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
   });
   router.get('/conversations/:conversationId/context', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     const empresaId = validContextTenant(req);
+    const usuarioId = pgInt4Number(req.user?.uid);
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!usuarioId) return res.status(403).json({ error: 'Acceso denegado' });
     if (!canonicalUuid(req.params.conversationId)) return res.status(400).json({ error: 'conversation_id_invalid' });
     try {
-      const result = await getCloudConversationContext({
-        query, empresaId, conversationId: req.params.conversationId, orderLimit: 5,
-      });
+      const result = await sensitiveRead(req, empresaId, txQuery => getCloudConversationContext({
+        query: txQuery, empresaId, conversationId: req.params.conversationId, orderLimit: 5,
+      }));
       if (!result) return res.status(404).json({ error: 'conversation_not_found' });
       return res.json(result);
     } catch (error) {
+      if (error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') return res.status(403).json({ error: 'actor_forbidden' });
       if (isInvalidArgument(error)) return res.status(400).json({ error: 'conversation_id_invalid' });
       return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
   });
   router.get('/conversations/:conversationId/messages', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     const empresaId = resolveTenant(req);
+    const usuarioId = pgInt4Number(req.user?.uid);
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!usuarioId) return res.status(403).json({ error: 'Acceso denegado' });
     if (!canonicalUuid(req.params.conversationId) && !positiveInteger(req.params.conversationId)) {
       return res.status(400).json({ error: 'conversation_id_invalid' });
     }
     const page = pagination(req.query, 50);
     if (!page) return res.status(400).json({ error: 'pagination_invalid' });
     try {
-      const result = await listCloudConversationMessages({
-        query,
+      const result = await sensitiveRead(req, empresaId, txQuery => listCloudConversationMessages({
+        query: txQuery,
         empresaId,
         conversationId: req.params.conversationId,
         ...page,
-      });
+      }));
       if (!result) return res.status(404).json({ error: 'conversation_not_found' });
       return res.json(result);
     } catch (error) {
+      if (error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') return res.status(403).json({ error: 'actor_forbidden' });
       if (isInvalidArgument(error)) return res.status(400).json({ error: 'pagination_invalid' });
       return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
@@ -346,64 +403,76 @@ export function createWhatsAppCloudInboxAdminRouter({
   const attachmentGuards = [withAuth, requireCanonicalBackofficeRole];
   router.get('/conversations/:conversationId/messages/:messageId/attachment', ...attachmentGuards, async (req, res) => {
     const empresaId = resolveTenant(req);
+    const usuarioId = pgInt4Number(req.user?.uid);
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!usuarioId) return res.status(403).json({ error: 'Acceso denegado' });
     if (!canonicalUuid(req.params.conversationId)) return res.status(400).json({ error: 'conversation_id_invalid' });
     if (!positiveInteger(req.params.messageId)) return res.status(400).json({ error: 'message_id_invalid' });
     try {
-      const metadata = await getCloudAttachmentMetadata({
-        query, empresaId, conversationId: req.params.conversationId, messageId: req.params.messageId,
-      });
+      const metadata = await sensitiveRead(req, empresaId, txQuery => getCloudAttachmentMetadata({
+        query: txQuery, empresaId, conversationId: req.params.conversationId, messageId: req.params.messageId,
+      }));
       if (!metadata) return res.status(404).json({ error: 'attachment_not_found' });
       return res.json(metadata);
-    } catch {
+    } catch (error) {
+      if (error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') return res.status(403).json({ error: 'actor_forbidden' });
       return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
   });
   router.get('/conversations/:conversationId/messages/:messageId/attachment/download', ...attachmentGuards, async (req, res) => {
     const empresaId = resolveTenant(req);
+    const usuarioId = pgInt4Number(req.user?.uid);
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!usuarioId) return res.status(403).json({ error: 'Acceso denegado' });
     if (!canonicalUuid(req.params.conversationId)) return res.status(400).json({ error: 'conversation_id_invalid' });
     if (!positiveInteger(req.params.messageId)) return res.status(400).json({ error: 'message_id_invalid' });
     try {
-      const metadata = await getCloudAttachmentMetadata({
-        query, empresaId, conversationId: req.params.conversationId, messageId: req.params.messageId,
-      });
+      const metadata = await sensitiveRead(req, empresaId, txQuery => getCloudAttachmentMetadata({
+        query: txQuery, empresaId, conversationId: req.params.conversationId, messageId: req.params.messageId,
+      }));
       if (!metadata) return res.status(404).json({ error: 'attachment_not_found' });
       return res.status(409).json({ error: 'attachment_download_unavailable' });
-    } catch {
+    } catch (error) {
+      if (error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') return res.status(403).json({ error: 'actor_forbidden' });
       return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
   });
   // Transitional legacy message-only attachment route: tenant-scoped and non-global.
   router.get('/messages/:messageId/attachment', ...attachmentGuards, async (req, res) => {
     const empresaId = resolveTenant(req);
+    const usuarioId = pgInt4Number(req.user?.uid);
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!usuarioId) return res.status(403).json({ error: 'Acceso denegado' });
     if (!positiveInteger(req.params.messageId)) return res.status(400).json({ error: 'message_id_invalid' });
     try {
-      const metadata = await getCloudAttachmentMetadata({
-        query,
+      const metadata = await sensitiveRead(req, empresaId, txQuery => getCloudAttachmentMetadata({
+        query: txQuery,
         empresaId,
         messageId: req.params.messageId,
-      });
+      }));
       if (!metadata) return res.status(404).json({ error: 'attachment_not_found' });
       return res.json(metadata);
-    } catch {
+    } catch (error) {
+      if (error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') return res.status(403).json({ error: 'actor_forbidden' });
       return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
   });
   router.get('/messages/:messageId/attachment/download', ...attachmentGuards, async (req, res) => {
     const empresaId = resolveTenant(req);
+    const usuarioId = pgInt4Number(req.user?.uid);
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!usuarioId) return res.status(403).json({ error: 'Acceso denegado' });
     if (!positiveInteger(req.params.messageId)) return res.status(400).json({ error: 'message_id_invalid' });
     try {
-      const metadata = await getCloudAttachmentMetadata({
-        query,
+      const metadata = await sensitiveRead(req, empresaId, txQuery => getCloudAttachmentMetadata({
+        query: txQuery,
         empresaId,
         messageId: req.params.messageId,
-      });
+      }));
       if (!metadata) return res.status(404).json({ error: 'attachment_not_found' });
       return res.status(409).json({ error: 'attachment_download_unavailable' });
-    } catch {
+    } catch (error) {
+      if (error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') return res.status(403).json({ error: 'actor_forbidden' });
       return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
   });

@@ -89,15 +89,7 @@ function requireActorRole(value) {
   return value;
 }
 
-export async function lockAndRevalidateMutationActor(client, { usuarioId, actorRole, empresaId }) {
-  const result = await client.query(
-    `SELECT role, empresa_id, activo
-       FROM public.usuarios
-      WHERE id = $1
-      FOR UPDATE`,
-    [usuarioId],
-  );
-  const actor = result.rows[0];
+function assertLockedActorAuthorized(actor, { actorRole, empresaId }) {
   const authorized = actor?.activo === true
     && actor.role === actorRole
     && (actorRole === 'admin'
@@ -106,6 +98,28 @@ export async function lockAndRevalidateMutationActor(client, { usuarioId, actorR
   if (!authorized) {
     throw sanitizedError('CLOUD_INBOX_ACTOR_FORBIDDEN', 'WhatsApp Cloud actor forbidden');
   }
+}
+
+export async function lockAndRevalidateReadActor(client, { usuarioId, actorRole, empresaId }) {
+  const result = await client.query(
+    `SELECT role, empresa_id, activo
+       FROM public.usuarios
+      WHERE id = $1
+      FOR SHARE`,
+    [usuarioId],
+  );
+  assertLockedActorAuthorized(result.rows[0], { actorRole, empresaId });
+}
+
+export async function lockAndRevalidateMutationActor(client, { usuarioId, actorRole, empresaId }) {
+  const result = await client.query(
+    `SELECT role, empresa_id, activo
+       FROM public.usuarios
+      WHERE id = $1
+      FOR UPDATE`,
+    [usuarioId],
+  );
+  assertLockedActorAuthorized(result.rows[0], { actorRole, empresaId });
 }
 
 function maskParticipant(value) {
@@ -322,27 +336,42 @@ export async function listCloudConversations({
   const directionParameter = `$${extraParameterStart}`;
   const messageTypeParameter = `$${extraParameterStart + 1}`;
   const paymentParameter = `$${extraParameterStart + 2}`;
-  const paymentCondition = paymentFilter == null
+  const paymentCondition = `AND customer.payment_method = ${paymentParameter}::text`;
+  const customerCtes = source => `ranked_customers AS MATERIALIZED (
+         SELECT ${source}.conversation_id,
+                NULLIF(BTRIM(COALESCE(point.nombre, point.cliente)), '') AS customer_name,
+                NULLIF(BTRIM(COALESCE(point.direccion_completa,
+                  NULLIF(CONCAT_WS(', ', NULLIF(point.direccion, ''), NULLIF(point.ciudad, '')), '')
+                )), '') AS delivery_address,
+                LOWER(NULLIF(BTRIM(order_row.metodo_pago), '')) AS latest_payment_method,
+                ROW_NUMBER() OVER (
+                  PARTITION BY ${source}.conversation_id
+                  ORDER BY order_row.fecha DESC NULLS LAST, order_row.id DESC NULLS LAST, point.id DESC
+                ) AS customer_rank
+           FROM public.puntos_entrega AS point
+           JOIN ${source}
+             ON point.empresa_id = $1
+            AND RIGHT(regexp_replace(COALESCE(point.telefono_normalizado, point.telefono, ''), '\\D', '', 'g'), 10)
+                = RIGHT(regexp_replace(${source}.participant_wa_id, '\\D', '', 'g'), 10)
+           LEFT JOIN public.pedidos AS order_row
+             ON order_row.empresa_id = point.empresa_id
+            AND order_row.punto_entrega_id = point.id
+       ), conversation_customers AS MATERIALIZED (
+         SELECT conversation_id, customer_name, delivery_address,
+                CASE WHEN latest_payment_method IN ('efectivo', 'transferencia')
+                     THEN latest_payment_method END AS payment_method
+           FROM ranked_customers
+          WHERE customer_rank = 1
+       )`;
+  const preFilterCustomerCtes = paymentFilter == null ? '' : `${customerCtes('ordered')}, `;
+  const postFilterCustomerCtes = paymentFilter == null ? `, ${customerCtes('filtered')}` : '';
+  const paymentCustomerJoin = paymentFilter == null ? '' : `LEFT JOIN conversation_customers AS customer
+             ON customer.conversation_id = ordered.conversation_id`;
+  const requestedPaymentCustomerJoin = paymentFilter == null ? '' : `LEFT JOIN conversation_customers AS customer
+             ON customer.conversation_id = requested.id`;
+  const activePaymentCondition = paymentFilter == null
     ? `AND ${paymentParameter}::text IS NULL`
-    : `AND (
-            SELECT CASE WHEN payment.payment_method IN ('efectivo', 'transferencia')
-                        THEN payment.payment_method END
-              FROM public.puntos_entrega AS point
-              JOIN LATERAL (
-                SELECT LOWER(NULLIF(BTRIM(order_row.metodo_pago), '')) AS payment_method,
-                       order_row.fecha, order_row.id
-                  FROM public.pedidos AS order_row
-                 WHERE order_row.empresa_id = point.empresa_id
-                   AND order_row.punto_entrega_id = point.id
-                 ORDER BY order_row.fecha DESC NULLS LAST, order_row.id DESC
-                 LIMIT 1
-              ) AS payment ON TRUE
-             WHERE point.empresa_id = $1
-               AND RIGHT(regexp_replace(COALESCE(point.telefono_normalizado, point.telefono, ''), '\\D', '', 'g'), 10)
-                   = RIGHT(regexp_replace(ordered.participant_wa_id, '\\D', '', 'g'), 10)
-             ORDER BY payment.fecha DESC NULLS LAST, payment.id DESC, point.id DESC
-             LIMIT 1
-          ) = ${paymentParameter}::text`;
+    : paymentCondition;
   const queryParams = [
     tenantId, pageSize + 1, null, pageCursor?.id ?? null, fromFilter, toFilter,
     actorId, workflowStatus, priority, unread,
@@ -439,7 +468,7 @@ export async function listCloudConversations({
                       CASE WHEN queue_bucket = 0 THEN COALESCE(last_inbound_at, message_at) ELSE message_at END
                     ) * 1000000))::BIGINT AS queue_activity_key
            FROM classified
-       ), authoritative_removed AS (
+       ), ${preFilterCustomerCtes}authoritative_removed AS (
          SELECT COALESCE(
                   jsonb_agg(requested.id::text ORDER BY requested.id)
                     FILTER (WHERE ordered.conversation_id IS NULL),
@@ -449,6 +478,7 @@ export async function listCloudConversations({
              SELECT value::uuid AS id
                FROM jsonb_array_elements_text(${membershipParameter}::jsonb)
            ) AS requested
+           ${requestedPaymentCustomerJoin}
            LEFT JOIN ordered
              ON ordered.conversation_id = requested.id
             AND (($5::timestamptz IS NULL AND $6::timestamptz IS NULL) OR ordered.id IS NOT NULL)
@@ -457,47 +487,33 @@ export async function listCloudConversations({
             AND ($10::boolean IS NULL OR (ordered.unread_count > 0) = $10)
             AND (${directionParameter}::text IS NULL OR ordered.direction = ${directionParameter})
             AND (${messageTypeParameter}::text IS NULL OR ordered.message_type = ${messageTypeParameter})
-            ${paymentCondition}
+            ${activePaymentCondition}
        )${countersCte}, filtered AS (
-         SELECT * FROM ordered
-          WHERE (($5::timestamptz IS NULL AND $6::timestamptz IS NULL) OR id IS NOT NULL)
-            AND ($8::text IS NULL OR workflow_status = $8)
-            AND ($9::text IS NULL OR priority = $9)
-            AND ($10::boolean IS NULL OR (unread_count > 0) = $10)
-            AND (${directionParameter}::text IS NULL OR direction = ${directionParameter})
-            AND (${messageTypeParameter}::text IS NULL OR message_type = ${messageTypeParameter})
-            ${paymentCondition}
+         SELECT ordered.*
+           FROM ordered
+           ${paymentCustomerJoin}
+          WHERE (($5::timestamptz IS NULL AND $6::timestamptz IS NULL) OR ordered.id IS NOT NULL)
+            AND ($8::text IS NULL OR ordered.workflow_status = $8)
+            AND ($9::text IS NULL OR ordered.priority = $9)
+            AND ($10::boolean IS NULL OR (ordered.unread_count > 0) = $10)
+            AND (${directionParameter}::text IS NULL OR ordered.direction = ${directionParameter})
+            AND (${messageTypeParameter}::text IS NULL OR ordered.message_type = ${messageTypeParameter})
+            ${activePaymentCondition}
             AND ($13::bigint IS NULL OR (
-                last_message_activity_key, id, conversation_id
+                ordered.last_message_activity_key, ordered.id, ordered.conversation_id
               ) ${cursorComparator} (
                 $13::bigint, $4::bigint, $14::uuid
               ))
-            ORDER BY last_message_activity_key ${sortDirection}, id ${sortDirection}, conversation_id ${sortDirection}
+            ORDER BY ordered.last_message_activity_key ${sortDirection}, ordered.id ${sortDirection},
+                     ordered.conversation_id ${sortDirection}
           LIMIT $2
-       )
+       )${postFilterCustomerCtes}
        SELECT filtered.*, customer.customer_name, customer.delivery_address, customer.payment_method,
               authoritative_removed.ids AS authoritative_removed_ids,
               ${counterSelect}
          ${resultFrom}
-         LEFT JOIN LATERAL (
-           SELECT NULLIF(BTRIM(COALESCE(pe.nombre, pe.cliente)), '') AS customer_name,
-                  NULLIF(BTRIM(COALESCE(pe.direccion_completa,
-                    NULLIF(CONCAT_WS(', ', NULLIF(pe.direccion, ''), NULLIF(pe.ciudad, '')), '')
-                  )), '') AS delivery_address,
-                  CASE WHEN payment.payment_method IN ('efectivo', 'transferencia')
-                       THEN payment.payment_method END AS payment_method
-             FROM public.puntos_entrega pe
-             LEFT JOIN LATERAL (
-               SELECT LOWER(NULLIF(BTRIM(p.metodo_pago), '')) AS payment_method, p.fecha, p.id
-                 FROM public.pedidos p
-                WHERE p.empresa_id = pe.empresa_id AND p.punto_entrega_id = pe.id
-                ORDER BY p.fecha DESC NULLS LAST, p.id DESC LIMIT 1
-             ) payment ON TRUE
-            WHERE pe.empresa_id = $1
-              AND RIGHT(regexp_replace(COALESCE(pe.telefono_normalizado, pe.telefono, ''), '\\D', '', 'g'), 10)
-                  = RIGHT(regexp_replace(filtered.participant_wa_id, '\\D', '', 'g'), 10)
-            ORDER BY payment.fecha DESC NULLS LAST, payment.id DESC, pe.id DESC LIMIT 1
-         ) customer ON TRUE
+         LEFT JOIN conversation_customers AS customer
+           ON customer.conversation_id = filtered.conversation_id
         ORDER BY filtered.last_message_activity_key ${sortDirection}, filtered.id ${sortDirection},
                 filtered.conversation_id ${sortDirection}`,
       queryParams,

@@ -213,9 +213,15 @@ async function withBrowserPage(viewport, work, {
     }, simulatedVisualViewport);
     await page.setRequestInterception(true);
     const counts = {
-      conversations: 0, messages: 0, contexts: 0, replies: 0, replyKeys: [], apiRequests: [],
+      conversations: 0, messages: 0, contexts: 0, replies: 0, replyKeys: [], apiRequests: [], failedApiRequests: [],
       activeConversations: 0, activeMessages: 0, maxActiveConversations: 0, maxActiveMessages: 0,
     };
+    page.on('requestfailed', request => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith('/api/')) counts.failedApiRequests.push({
+        path: url.pathname, method: request.method(), error: request.failure()?.errorText || '',
+      });
+    });
     page.on('request', async request => {
       const url = new URL(request.url());
       if (url.pathname.startsWith('/api/')) counts.apiRequests.push({ path: url.pathname, method: request.method(), query: url.search });
@@ -531,6 +537,71 @@ test('Task 6 browser auto-refresh sin búsqueda activa emite sólo GET y preserv
       assert.ok(['updating', 'updated'].includes(preserved.sync));
     },
     { refreshDelayMs: 40, sendTimeoutMs: 1_000 },
+  );
+});
+
+test('Task 6 browser aborta GET automáticos al ocultar y descarta 401/403 tardíos sin efectos', { skip: !existsSync(chromePath) }, async () => {
+  const listStarted = deferred();
+  const historyStarted = deferred();
+  const releaseList = deferred();
+  const releaseHistory = deferred();
+  let holdAutomatic = false;
+  await withBrowserPage(
+    { width: 1280, height: 800, deviceScaleFactor: 1 },
+    async ({ page, counts }) => {
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('hola'));
+      holdAutomatic = true;
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await Promise.all([listStarted.promise, historyStarted.promise]);
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      releaseList.resolve();
+      releaseHistory.resolve();
+      const deadline = Date.now() + 2_000;
+      while (counts.failedApiRequests.length < 2 && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      assert.ok(counts.failedApiRequests.some(entry => entry.path === '/api/admin/whatsapp-cloud/conversations'));
+      assert.ok(counts.failedApiRequests.some(entry => /\/messages$/.test(entry.path)));
+      const preserved = await page.evaluate(() => ({
+        status: document.querySelector('#appStatus').textContent,
+        ids: [...document.querySelectorAll('.conversation-card')].map(item => item.dataset.conversationId),
+        history: document.querySelector('#messageHistory').textContent,
+      }));
+      assert.equal(preserved.status, '');
+      assert.deepEqual(preserved.ids, ['44', '45']);
+      assert.match(preserved.history, /hola/);
+    },
+    {
+      refreshDelayMs: 10_000,
+      conversationsResponse: async () => {
+        if (!holdAutomatic) return { conversations: [
+          { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+          { conversationId: '45', participant: '*********0002', lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'sent' },
+        ], nextCursor: null };
+        listStarted.resolve();
+        await releaseList.promise;
+        return { status: 403, body: { error: 'actor_forbidden' } };
+      },
+      messagesResponse: async () => {
+        if (!holdAutomatic) return { messages: [
+          { id: '1', direction: 'inbound', type: 'text', text: 'hola', deliveryStatus: 'received', messageAt: '2026-10-06T12:00:00Z' },
+        ], nextCursor: null };
+        historyStarted.resolve();
+        await releaseHistory.promise;
+        return { status: 401, body: { error: 'session_expired' } };
+      },
+    },
   );
 });
 
@@ -904,7 +975,7 @@ test('Task 6 browser mergea lista e historial, preserva páginas, activo y borra
   );
 });
 
-test('Task 6 browser revalida búsqueda activa por POST protegido, reemplaza membresía y cursor sin perder activo, borrador ni foco', { skip: !existsSync(chromePath) }, async () => {
+test('Task 6 browser revalida búsqueda activa con GET header no-store, reemplaza membresía y cursor sin perder activo, borrador ni foco', { skip: !existsSync(chromePath) }, async () => {
   const a = '4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1';
   const b = '6be6f351-3535-48d1-b1a1-cde16f27a9b3';
   const c = '97db6aed-a667-47d7-8bc7-3bca34228d49';
@@ -947,14 +1018,11 @@ test('Task 6 browser revalida búsqueda activa por POST protegido, reemplaza mem
       assert.equal(searchRequests.length, searchPostsBefore + 1);
       const automatic = searchRequests.at(-1);
       assert.equal(new URL(automatic.url).search, '');
-      assert.equal(automatic.method, 'POST');
-      assert.equal(automatic.headers.origin, new URL(automatic.url).origin);
-      assert.match(automatic.headers['content-type'], /^application\/json/);
-      assert.deepEqual(automatic.body, { query: 'cliente', limit: 25, sort: 'asc', empresa_id: 7 });
-      const forbiddenWrites = counts.apiRequests.slice(baseline).filter(entry => (
-        entry.method !== 'GET'
-        && !(entry.method === 'POST' && entry.path === '/api/admin/whatsapp-cloud/conversations/search')
-      ));
+      assert.equal(automatic.method, 'GET');
+      assert.match(automatic.headers['x-pedivoy-inbox-search'], /^[A-Za-z0-9_-]+$/);
+      assert.equal(automatic.body, null);
+      assert.deepEqual(automatic.headerPayload, { query: 'cliente', limit: 25, sort: 'asc', empresa_id: 7 });
+      const forbiddenWrites = counts.apiRequests.slice(baseline).filter(entry => entry.method !== 'GET');
       assert.deepEqual(forbiddenWrites, []);
 
       await clickCurrent(page, '#loadMoreConversations');
@@ -979,15 +1047,21 @@ test('Task 6 browser revalida búsqueda activa por POST protegido, reemplaza mem
         ], nextCursor: null };
       },
       searchResponse: ({ request }) => {
+        const headers = request.headers();
+        const encodedHeader = headers['x-pedivoy-inbox-search'];
         searchRequests.push({
-          url: request.url(), method: request.method(), headers: request.headers(),
-          body: JSON.parse(request.postData() || '{}'),
+          url: request.url(), method: request.method(), headers,
+          body: request.postData() ? JSON.parse(request.postData()) : null,
+          headerPayload: encodedHeader
+            ? JSON.parse(Buffer.from(encodedHeader, 'base64url').toString('utf8'))
+            : null,
         });
         if (searchRequests.length === 1) return { conversations: [
           { conversationId: a, participant: '*********0001', priority: 'normal', workflowStatus: 'pending', version: 1, unreadCount: 1, lastMessageAt: '2026-10-06T10:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '10' },
           { conversationId: b, participant: '*********0002', priority: 'high', workflowStatus: 'pending', version: 1, unreadCount: 2, lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '20' },
         ], nextCursor: 'search-old' };
-        if (searchRequests.at(-1).body.cursor) return { conversations: [], nextCursor: null };
+        const latestSearch = searchRequests.at(-1);
+        if ((latestSearch.body || latestSearch.headerPayload)?.cursor) return { conversations: [], nextCursor: null };
         refreshed.resolve();
         return { conversations: [
           { conversationId: a, participant: '*********0001', priority: 'urgent', workflowStatus: 'resolved', version: 4, unreadCount: 0, lastMessageAt: '2026-10-08T12:30:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'read', lastMessageId: '40' },
@@ -1103,8 +1177,13 @@ test('Task 6 browser descarta GET demorados al cambiar tenant y conversación', 
       assert.equal(finalState.title, '*********0202');
       assert.match(finalState.history, /tenant-B vigente/);
       assert.doesNotMatch(finalState.history, /tenant-A/);
-      assert.equal(counts.maxActiveConversations, 1, 'lista nunca solapa GET aunque abort demore');
-      assert.equal(counts.maxActiveMessages, 1, 'historial nunca solapa GET aunque abort demore');
+      assert.ok(counts.failedApiRequests.some(entry => (
+        entry.path === '/api/admin/whatsapp-cloud/conversations' && entry.method === 'GET'
+      )), 'lista anterior debe abortarse antes de cargar el tenant nuevo');
+      assert.ok(counts.failedApiRequests.some(entry => /\/conversations\/44\/messages$/.test(entry.path)),
+        'historial anterior debe abortarse antes de cargar la conversación nueva');
+      assert.ok(counts.maxActiveConversations <= 2, 'sólo puede coexistir el GET nuevo con el anterior ya abortado');
+      assert.ok(counts.maxActiveMessages <= 2, 'sólo puede coexistir el GET nuevo con el anterior ya abortado');
     },
     {
       waitForConversation: false,

@@ -593,6 +593,18 @@ test('controlador usa credenciales same-origin, AbortController y contrato de re
   assert.doesNotMatch(controller, /window\.location\.search|URLSearchParams\(location\.search/);
 });
 
+test('GET automáticos reciben AbortSignal y responses abortadas no procesan 401/403 tardío', async () => {
+  const controller = await source(controllerUrl);
+  const autoConversations = controller.match(/async function autoRefreshConversations[\s\S]*?async function autoRefreshHistory/)?.[0] || '';
+  const autoHistory = controller.match(/async function autoRefreshHistory[\s\S]*?async function runAutoRefreshCycle/)?.[0] || '';
+  const requestSource = controller.match(/async function request\(url, options = \{\}\)[\s\S]*?\n\}/)?.[0] || '';
+  assert.match(autoConversations, /const listRequest = request\(url, \{ signal \}\)/);
+  assert.match(autoHistory, /await request\(url, \{ signal \}\)/);
+  assert.match(requestSource, /if \(options\.signal\?\.aborted\)[\s\S]*response\.status === 401/);
+  assert.match(controller, /autoRefreshScheduler\.pause\(\)[\s\S]*historyController\?\.abort\(\)/);
+  assert.match(controller, /autoRefreshScheduler\.stop\(\)[\s\S]*request\('\/api\/logout'/);
+});
+
 test('layout usa shell flex de viewport y neutraliza nav global sin restas fijas', async () => {
   const html = await source(pageUrl);
   assert.match(html, /body\s*\{[^}]*display:flex[^}]*flex-direction:column[^}]*min-height:100vh/s);

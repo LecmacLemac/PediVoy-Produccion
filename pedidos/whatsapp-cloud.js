@@ -487,7 +487,9 @@ async function request(url, options = {}) {
       ...(options.headers || {}),
     },
   });
+  if (options.signal?.aborted) throw new DOMException('Solicitud cancelada', 'AbortError');
   const payload = await readJson(response);
+  if (options.signal?.aborted) throw new DOMException('Solicitud cancelada', 'AbortError');
   if (response.status === 401) {
     revokeSensitiveInboxState({ redirect: true });
     throw new Error('session_expired');
@@ -700,6 +702,13 @@ function clearConversationSearch({ restore = true } = {}) {
     renderConversations();
     setStatus('');
   }
+}
+
+function encodeSensitiveSearchHeader(payload) {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
 
 function conversationSearchBody({ query, filters, cursor = null, companyId = state.companyId } = {}) {
@@ -1090,17 +1099,18 @@ async function autoRefreshConversations(signal) {
       ...(state.searchQuery ? state.conversations.map(item => String(item.conversationId)) : []),
     ])].filter(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)).slice(0, 100),
   });
-  const listRequest = request(url);
+  const listRequest = request(url, { signal });
   const searchRequest = started.searchQuery && manualSearchInFlight === 0
     ? request(
       buildCloudApiUrl('/conversations/search', {
         role: state.role, companyId: started.companyId, tenantInBody: true,
       }),
       {
-        method: 'POST',
-        body: JSON.stringify(conversationSearchBody({
-          query: started.searchQuery, filters: started.filters, companyId: started.companyId,
-        })),
+        headers: {
+          'X-Pedivoy-Inbox-Search': encodeSensitiveSearchHeader(conversationSearchBody({
+            query: started.searchQuery, filters: started.filters, companyId: started.companyId,
+          })),
+        },
         signal,
       },
     ).catch(error => {
@@ -1172,7 +1182,7 @@ async function autoRefreshHistory(signal) {
   const path = `/conversations/${encodeURIComponent(started.conversationId)}/messages`;
   const url = buildCloudApiUrl(path, { role: state.role, companyId: state.companyId, limit: 50 });
   const wasAtBottom = elements.history.scrollHeight - elements.history.scrollTop - elements.history.clientHeight <= 24;
-  const { response, payload } = await request(url);
+  const { response, payload } = await request(url, { signal });
   if (response.status === 403) throw Object.assign(new Error('refresh_forbidden'), { stopRefresh: true });
   if (!response.ok) throw new Error('refresh_history_failed');
   if (signal.aborted

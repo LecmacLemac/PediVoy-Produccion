@@ -16,6 +16,14 @@ import {
   updateCloudConversationState,
 } from '../src/whatsappCloud/inboxRepository.js';
 
+function createTestRouter(options = {}) {
+  return createWhatsAppCloudInboxAdminRouter({
+    ...options,
+    sensitiveReadRunner: options.sensitiveReadRunner
+      || ((_req, _empresaId, work) => work(options.query)),
+  });
+}
+
 async function withServer(app, work) {
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
@@ -67,7 +75,7 @@ function createHarness({ role, empresaId = 7 } = {}) {
   const calls = [];
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role, empresa_id: empresaId };
@@ -88,7 +96,7 @@ test('reply exige JSON y Origin canónico exacto antes de query o enqueue', asyn
   const app = express();
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 22, role: 'admin', empresa_id: 7 };
@@ -144,7 +152,7 @@ test('reply rechaza una configuración canónica con path en vez de reducirla a 
   let enqueues = 0;
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test/inbox',
     withAuth(req, _res, next) {
       req.user = { uid: 22, role: 'admin', empresa_id: 7 };
@@ -178,6 +186,21 @@ for (const role of ['user', 'repartidor', 'referente', 'facturacion', 'contable'
     assert.equal(calls.length, 0);
   });
 }
+
+test('auto-search GET acepta payload sensible sólo en header y conserva no-store', async () => {
+  const { app, calls } = createHarness({ role: 'admin', empresaId: 7 });
+  const payload = { query: 'cliente', limit: 25, sort: 'asc' };
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/search`, {
+      headers: { 'X-Pedivoy-Inbox-Search': Buffer.from(JSON.stringify(payload)).toString('base64url') },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].params[0], 7);
+  assert.equal(calls[0].params[14], 'cliente');
+});
 
 test('admin queda ligado estrictamente a req.user.empresa_id aunque intente override', async () => {
   const { app, calls } = createHarness({ role: 'admin', empresaId: 7 });
@@ -216,11 +239,11 @@ test('conversaciones aceptan orden, dirección, tipo y medio de pago sin filtrar
   assert.equal(calls[0].params[5], '2026-10-08T00:00:00.000Z');
   assert.match(calls[0].sql, /message_at >= \$5::timestamptz/);
   assert.match(calls[0].sql, /message_at < \$6::timestamptz/);
-  assert.match(calls[0].sql, /\) = \$\d+::text/);
+  assert.match(calls[0].sql, /customer\.payment_method = \$\d+::text/);
   assert.match(calls[0].sql, /direction = \$\d+/);
   assert.match(calls[0].sql, /message_type = \$\d+/);
   assert.match(calls[0].sql, /ORDER BY filtered\.last_message_activity_key ASC, filtered\.id ASC/);
-  assert.match(calls[0].sql, /COALESCE\(pe\.telefono_normalizado, pe\.telefono/);
+  assert.match(calls[0].sql, /COALESCE\(point\.telefono_normalizado, point\.telefono/);
 });
 
 test('conversaciones rechazan filtros de fecha, orden, dirección, tipo o pago inválidos', async () => {
@@ -254,7 +277,7 @@ test('historial resuelve la conversación por id tenant-scoped y devuelve sólo 
   const queries = [];
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'admin', empresa_id: 7 };
@@ -301,7 +324,7 @@ test('attachment expone metadatos allowlisted y download falla cerrado sin stora
   const queries = [];
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'super', empresa_id: null };
@@ -344,7 +367,7 @@ test('reply manual usa sólo enqueue correlacionado Cloud, ignora transport del 
   const enqueueCalls = [];
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 22, role: 'admin', empresa_id: 7 };
@@ -424,7 +447,7 @@ test('reply revalida actor y participante con el mismo client antes del único I
   };
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 22, role: 'admin', empresa_id: 7 };
@@ -473,7 +496,7 @@ test('reply con JWT stale pierde tras revalidación transaccional y no llega a p
   };
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 22, role: 'admin', empresa_id: 7 };
@@ -502,7 +525,7 @@ test('reply replay normaliza todo lifecycle durable a aceptación pública sin a
     let enqueueAttempts = 0;
     const app = express();
     app.use(express.json());
-    app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    app.use('/api/admin/whatsapp-cloud', createTestRouter({
       canonicalOrigin: 'https://admin.pedivoy.test',
       withAuth(req, _res, next) {
         req.user = { uid: 22, role: 'admin', empresa_id: 7 };
@@ -547,7 +570,7 @@ test('reply replay cuyo lookup de correlación falla responde outcome_unknown si
   let lookupAttempts = 0;
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 22, role: 'admin', empresa_id: 7 };
@@ -586,7 +609,7 @@ test('reply informa configuración Cloud inactiva con error público sin filtrar
   let attempts = 0;
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 22, role: 'admin', empresa_id: 7 };
@@ -622,7 +645,7 @@ test('reply distingue outcome_unknown sanitizado y no intenta retry ni fallback'
   let attempts = 0;
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 22, role: 'super', empresa_id: null };
@@ -663,7 +686,7 @@ test('reply duplicado con la misma key pero distinto destinatario o texto respon
   const calls = [];
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 22, role: 'admin', empresa_id: 7 };
@@ -726,7 +749,7 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
   ];
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'admin', empresa_id: 7 };
@@ -760,7 +783,8 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].params.slice(0, 2), [7, 3]);
   assert.match(calls[0].sql, /ORDER BY filtered\.last_message_activity_key DESC, filtered\.id DESC/);
-  assert.match(calls[0].sql, /LEFT JOIN LATERAL/);
+  assert.doesNotMatch(calls[0].sql, /JOIN LATERAL/);
+  assert.match(calls[0].sql, /ranked_customers AS MATERIALIZED/);
   assert.match(calls[0].sql, /customer_name/);
   assert.match(calls[0].sql, /delivery_address/);
   assert.match(calls[0].sql, /payment_method/);
@@ -771,7 +795,7 @@ test('refresh GET revalida membresía en lote tenant-scoped y devuelve bajas aut
   const remove = '6be6f351-3535-48d1-b1a1-cde16f27a9b3';
   const calls = [];
   const app = express();
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     withAuth(req, _res, next) { req.user = { uid: 11, role: 'admin', empresa_id: 7 }; next(); },
     async query(sql, params) {
       calls.push({ sql, params });
@@ -798,7 +822,7 @@ test('refresh GET revalida membresía en lote tenant-scoped y devuelve bajas aut
 test('refresh GET rechaza IDs de revalidación inválidos antes de consultar', async () => {
   let queries = 0;
   const app = express();
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     withAuth(req, _res, next) { req.user = { uid: 11, role: 'admin', empresa_id: 7 }; next(); },
     async query() { queries += 1; return []; },
   }));
@@ -814,7 +838,7 @@ test('historial pagina hacia atrás pero responde cada página en orden cronoló
   const calls = [];
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'admin', empresa_id: 7 };
@@ -853,7 +877,7 @@ test('validación estricta rechaza cursores, ids, empresa y reply mal tipados an
   let enqueues = 0;
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'super', empresa_id: null };
@@ -899,7 +923,7 @@ test('reply super rechaza selectores de empresa discordantes antes de query o en
   let enqueues = 0;
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'super', empresa_id: null };
@@ -932,7 +956,7 @@ test('reply super acepta un selector query único y duplicados concordantes', as
   const selectedTenants = [];
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'super', empresa_id: null };
@@ -973,7 +997,7 @@ test('API rechaza empresa_id fuera de int4 y tipos JSON no numéricos antes de q
   let enqueues = 0;
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'super', empresa_id: null };
@@ -1057,11 +1081,10 @@ test('listado e historial usan id UUID estable y metadatos operativos allowliste
   const stableId = '4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1';
   const query = async (sql, params) => {
     calls.push({ sql, params });
-    if (/FROM public\.whatsapp_cloud_conversations AS conversation/.test(sql)
-      && /participant_wa_id/.test(sql) && !/JOIN LATERAL/.test(sql)) {
+    if (/SELECT participant_wa_id\s+FROM public\.whatsapp_cloud_conversations/.test(sql)) {
       return [{ participant_wa_id: '5493515550001' }];
     }
-    if (/JOIN LATERAL/.test(sql)) return [{
+    if (/conversation_customers AS MATERIALIZED/.test(sql)) return [{
       conversation_id: stableId,
       participant_wa_id: '5493515550001', workflow_status: 'pending', priority: 'high', version: 4,
       id: '99', direction: 'inbound', message_type: 'text', delivery_status: 'received',
@@ -1110,7 +1133,7 @@ test('PATCH state exige JSON, Origin exacto, cambio válido y expectedVersion', 
   const stableId = '4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1';
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'admin', empresa_id: 7 };
@@ -1180,7 +1203,7 @@ test('PATCH state no-op conserva versión y devuelve éxito, pero expectedVersio
   const calls = [];
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+  app.use('/api/admin/whatsapp-cloud', createTestRouter({
     canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'admin', empresa_id: 7 };

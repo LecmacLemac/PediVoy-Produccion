@@ -120,6 +120,13 @@ async function withServer(app, work) {
   }
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
 function cloudConfig(phoneNumberId) {
   return JSON.stringify({
     whatsapp: {
@@ -532,6 +539,102 @@ test('reply serializa revocación/reasignación/degradación con actor→partici
   });
 });
 
+test('lecturas serializan ambos ganadores de desactivación, reasignación y degradación del actor', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id, config_integraciones) VALUES (1,$1::jsonb),(2,$2::jsonb)', [
+      cloudConfig('phone-read-race-one'), cloudConfig('phone-read-race-two'),
+    ]);
+    await pool.query("INSERT INTO usuarios(id,username,password,role,empresa_id,activo) VALUES (1,'admin-read-race','x','admin',1,true)");
+    await pool.query(`INSERT INTO whatsapp_cloud_messages
+      (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at)
+      VALUES (1,'inbound','5493515557101','text','tenant one','received',0,NOW(),NOW(),NOW())`);
+
+    let actorLockedResolve = null;
+    let listBlocked = null;
+    const routePool = {
+      async connect() {
+        const client = await pool.connect();
+        return {
+          async query(input, params) {
+            const text = typeof input === 'string' ? input : input.text;
+            const resultPromise = client.query(input, params);
+            if (/FROM public\.usuarios/.test(text)) {
+              const result = await resultPromise;
+              actorLockedResolve?.();
+              return result;
+            }
+            if (listBlocked && /WITH .*scoped_conversations/s.test(text)) await listBlocked.promise;
+            return resultPromise;
+          },
+          release(error) { client.release(error); },
+        };
+      },
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+      canonicalOrigin: 'https://admin.pedivoy.test',
+      withAuth(req, _res, next) { req.user = { uid: 1, role: 'admin', empresa_id: 1 }; next(); },
+      query: async (sql, params) => (await pool.query(sql, params)).rows,
+      pool: routePool,
+    }));
+
+    await withServer(app, async baseUrl => {
+      const changes = [
+        ['deactivated', 'UPDATE usuarios SET activo=false WHERE id=1'],
+        ['reassigned', 'UPDATE usuarios SET empresa_id=2 WHERE id=1'],
+        ['demoted', "UPDATE usuarios SET role='user' WHERE id=1"],
+      ];
+      for (const [name, changeSql] of changes) {
+        await pool.query("UPDATE usuarios SET role='admin',empresa_id=1,activo=true WHERE id=1");
+        const changer = await pool.connect();
+        try {
+          await changer.query('BEGIN');
+          await changer.query(changeSql);
+          let settled = false;
+          const pending = fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations`)
+            .then(response => { settled = true; return response; });
+          await new Promise(resolve => setTimeout(resolve, 60));
+          assert.equal(settled, false, `${name}: read debe esperar revocación`);
+          await changer.query('COMMIT');
+          const response = await pending;
+          assert.equal(response.status, 403, name);
+          assert.deepEqual(await response.json(), { error: 'actor_forbidden' }, name);
+        } finally {
+          await changer.query('ROLLBACK').catch(() => {});
+          changer.release();
+        }
+
+        await pool.query("UPDATE usuarios SET role='admin',empresa_id=1,activo=true WHERE id=1");
+        const readGate = deferred();
+        listBlocked = deferred();
+        actorLockedResolve = readGate.resolve;
+        const pending = fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations`);
+        await readGate.promise;
+        const losingChanger = await pool.connect();
+        try {
+          await losingChanger.query('BEGIN');
+          let changeSettled = false;
+          const change = losingChanger.query(changeSql).then(() => { changeSettled = true; });
+          await new Promise(resolve => setTimeout(resolve, 60));
+          assert.equal(changeSettled, false, `${name}: revocación debe esperar lectura`);
+          listBlocked.resolve();
+          const response = await pending;
+          assert.equal(response.status, 200, name);
+          await change;
+          await losingChanger.query('COMMIT');
+        } finally {
+          actorLockedResolve = null;
+          listBlocked?.resolve();
+          listBlocked = null;
+          await losingChanger.query('ROLLBACK').catch(() => {});
+          losingChanger.release();
+        }
+      }
+    });
+  });
+});
+
 test('dos PATCH concurrentes con expectedVersion producen un ganador y un stale tenant-scoped', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id, config_integraciones) VALUES (1,$1::jsonb),(2,$2::jsonb)', [
@@ -815,6 +918,8 @@ test('Task 4 EXPLAIN ANALYZE ejecuta SQL productivo sin SubPlan, arrays ni trunc
     await pool.query(`INSERT INTO pedidos(id,empresa_id,punto_entrega_id)
       SELECT v,1,(SELECT MIN(id) FROM puntos_entrega) FROM generate_series(1,5000) v`);
     await pool.query(`INSERT INTO pedidos(id,empresa_id,punto_entrega_id) SELECT 777777,1,id FROM puntos_entrega WHERE nombre='Cliente 18000'`);
+    await pool.query(`INSERT INTO pedidos(id,empresa_id,punto_entrega_id,metodo_pago,fecha)
+      SELECT 888888,1,id,'transferencia','2026-10-08T12:00:00Z' FROM puntos_entrega WHERE nombre='Al Plan Exacto'`);
     for (const table of ['puntos_entrega','whatsapp_cloud_conversations','whatsapp_cloud_messages','pedidos']) await pool.query(`ANALYZE ${table}`);
     const cases = [
       ['prefix',/idx_puntos_entrega_whatsapp_search_name_prefix/],
@@ -844,6 +949,17 @@ test('Task 4 EXPLAIN ANALYZE ejecuta SQL productivo sin SubPlan, arrays ni trunc
         assert.ok(messageScans.every(node => Number(node['Actual Rows']) < 100), `message history was not candidate-scoped: ${plan}`);
       }
     }
+    const paymentStatement = await buildCloudConversationListSql({ transferOnly: true });
+    assert.doesNotMatch(paymentStatement.sql, /LIMIT 500|ANY\s*\(|ARRAY\s*\[/i);
+    const paymentExplained = await pool.query(
+      `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${paymentStatement.sql}`,
+      paymentStatement.params,
+    );
+    const paymentPlan = JSON.stringify(paymentExplained.rows[0]['QUERY PLAN'][0]);
+    assert.doesNotMatch(paymentPlan, /SubPlan/);
+    assert.doesNotMatch(paymentStatement.sql, /JOIN LATERAL[\s\S]*FROM public\.pedidos/i);
+    const paymentRows = await pool.query(paymentStatement.sql, paymentStatement.params);
+    assert.ok(paymentRows.rows.every(row => row.conversation_id == null || row.payment_method === 'transferencia'));
   });
 });
 
