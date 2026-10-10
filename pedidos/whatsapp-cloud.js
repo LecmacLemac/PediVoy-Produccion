@@ -122,6 +122,7 @@ let conversationReloadRequested = false;
 let manualHistoryInFlight = 0;
 let manualSearchInFlight = 0;
 let autoRefreshAllowed = true;
+let autoRefreshContextGeneration = 0;
 let activeOverlay = null;
 let overlayReturnFocus = null;
 
@@ -501,11 +502,32 @@ async function request(url, options = {}) {
   return { response, payload };
 }
 
-function clearChat({ composerAlreadyReset = false, restoreFocus = true } = {}) {
+function pauseAutoRefreshForContextSwitch() {
+  autoRefreshContextGeneration += 1;
+  const generation = autoRefreshContextGeneration;
+  const settlement = Promise.resolve(autoRefreshScheduler.pause()).catch(() => {});
+  return {
+    settle: () => settlement,
+    resume({ immediate = false } = {}) {
+      if (generation !== autoRefreshContextGeneration) return null;
+      return immediate
+        ? autoRefreshScheduler.resume()
+        : autoRefreshScheduler.start({ immediate: false });
+    },
+  };
+}
+
+function clearChat({
+  composerAlreadyReset = false,
+  restoreFocus = true,
+  refreshTransition = null,
+  resumeAutoRefresh = true,
+} = {}) {
   if (!composerAlreadyReset && !composerController.closeConversation()) {
     setComposerNotice('Esperá a que termine el envío antes de cambiar de conversación.', 'warning');
     return false;
   }
+  const transition = refreshTransition || pauseAutoRefreshForContextSwitch();
   state.activeConversation = null;
   closeOverlay({ restoreFocus: false });
   contextGate.invalidate();
@@ -530,6 +552,7 @@ function clearChat({ composerAlreadyReset = false, restoreFocus = true } = {}) {
       || document.querySelector('#conversationHeading');
     target?.focus();
   }
+  if (resumeAutoRefresh) transition.settle().then(() => transition.resume());
   return true;
 }
 
@@ -996,6 +1019,7 @@ async function loadConversations({ append = false } = {}) {
 }
 
 async function reloadConversationsFromStart({ preserveActiveConversation = false } = {}) {
+  const refreshTransition = pauseAutoRefreshForContextSwitch();
   state.conversationContextRevision += 1;
   state.conversationContextLoading = true;
   state.canonicalConversations = [];
@@ -1011,10 +1035,15 @@ async function reloadConversationsFromStart({ preserveActiveConversation = false
     state.activeCounterBaselineTrusted = false;
     syncContextControls();
   } else {
-    clearChat({ restoreFocus: false });
+    clearChat({ restoreFocus: false, refreshTransition, resumeAutoRefresh: false });
   }
   setStatus('Cargando conversaciones…');
-  await loadConversations();
+  try {
+    await refreshTransition.settle();
+    await loadConversations();
+  } finally {
+    refreshTransition.resume();
+  }
 }
 
 async function markConversationRead(conversationId, { generation, companyId }) {
@@ -1376,7 +1405,7 @@ function renderCompanyPicker(companies) {
       setComposerNotice('Esperá a que termine el envío antes de cambiar de empresa.', 'warning');
       return;
     }
-    const refreshSettlement = autoRefreshScheduler.pause();
+    const refreshTransition = pauseAutoRefreshForContextSwitch();
     state.companyId = nextCompanyId;
     clearQuickReplies();
     state.conversationContextRevision += 1;
@@ -1401,11 +1430,11 @@ function renderCompanyPicker(companies) {
     elements.conversations.replaceChildren();
     elements.queueCounters.replaceChildren();
     elements.conversationsMore.hidden = true;
-    clearChat({ composerAlreadyReset: true });
+    clearChat({ composerAlreadyReset: true, refreshTransition, resumeAutoRefresh: false });
     if (state.companyId) {
-      Promise.resolve(refreshSettlement)
+      refreshTransition.settle()
         .then(() => Promise.all([loadConversations(), loadQuickReplies()]))
-        .finally(() => autoRefreshScheduler.resume());
+        .finally(() => refreshTransition.resume({ immediate: true }));
     }
     else setStatus('Seleccioná una empresa para ver sus conversaciones.', 'warning');
   });

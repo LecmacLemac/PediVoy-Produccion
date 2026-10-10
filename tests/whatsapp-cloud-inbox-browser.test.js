@@ -178,6 +178,17 @@ async function withBrowserPage(viewport, work, {
     const page = await browser.newPage();
     await page.setViewport(viewport);
     await page.evaluateOnNewDocument(initialVisualViewport => {
+      const nativeFetch = window.fetch.bind(window);
+      window.__abortedApiSignals = [];
+      window.fetch = (input, options = {}) => {
+        const requestUrl = new URL(typeof input === 'string' ? input : input.url, window.location.href);
+        if (requestUrl.pathname.startsWith('/api/') && options.signal) {
+          options.signal.addEventListener('abort', () => {
+            window.__abortedApiSignals.push(requestUrl.pathname);
+          }, { once: true });
+        }
+        return nativeFetch(input, options);
+      };
       const nativeRandomUUID = crypto.randomUUID.bind(crypto);
       window.__uuidCalls = 0;
       crypto.randomUUID = () => {
@@ -603,6 +614,116 @@ test('Task 6 browser aborta GET automáticos al ocultar y descarta 401/403 tard�
       },
     },
   );
+});
+
+test('browser cancela refresh viejo al cerrar chat o cambiar filtros y reanuda una sola vez el contexto vigente', { skip: !existsSync(chromePath) }, async t => {
+  for (const scenario of ['close', 'filter']) {
+    await t.test(scenario, async () => {
+      const listStarted = deferred();
+      const historyStarted = deferred();
+      const releaseList = deferred();
+      const releaseHistory = deferred();
+      let holdAutomatic = false;
+      let heldList = false;
+      let heldHistory = false;
+      let currentListRequests = 0;
+
+      await withBrowserPage(
+        { width: 1280, height: 800, deviceScaleFactor: 1 },
+        async ({ page, counts }) => {
+          await page.evaluate(() => {
+            Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+            document.dispatchEvent(new Event('visibilitychange'));
+          });
+          await openConversationAndWait(page);
+          const initialListIds = await page.$$eval('.conversation-card', cards => cards.map(card => card.dataset.conversationId));
+          holdAutomatic = true;
+          await page.evaluate(() => {
+            Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+            document.dispatchEvent(new Event('visibilitychange'));
+          });
+          await Promise.all([listStarted.promise, historyStarted.promise]);
+
+          if (scenario === 'close') await clickCurrent(page, '#backToList');
+          else await page.select('#paymentFilter', 'transferencia');
+
+          await page.waitForFunction(() => window.__abortedApiSignals.length >= 2, { timeout: 2_000 });
+          releaseList.resolve();
+          releaseHistory.resolve();
+          await page.waitForFunction(expectedScenario => {
+            const cards = [...document.querySelectorAll('.conversation-card')];
+            if (expectedScenario === 'filter') {
+              return cards.length === 1 && cards[0].dataset.conversationId === '45';
+            }
+            return cards.length === 2 && document.querySelector('#chatTitle')?.textContent === 'Seleccioná una conversación';
+          }, {}, scenario);
+          await page.evaluate(() => {
+            Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+            document.dispatchEvent(new Event('visibilitychange'));
+            Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+            document.dispatchEvent(new Event('visibilitychange'));
+          });
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          const state = await page.evaluate(() => ({
+            url: window.location.pathname,
+            status: document.querySelector('#appStatus').textContent,
+            title: document.querySelector('#chatTitle').textContent,
+            ids: [...document.querySelectorAll('.conversation-card')].map(card => card.dataset.conversationId),
+            abortedSignals: [...window.__abortedApiSignals],
+          }));
+          assert.equal(state.url, '/pedidos/whatsapp-cloud.html', `${scenario}: 401 tardío no redirige`);
+          assert.notEqual(state.title, 'Acceso no autorizado', `${scenario}: 401/403 tardío no revoca el DOM`);
+          assert.equal(state.status, '', `${scenario}: 401/403 tardío no publica error de acceso`);
+          assert.ok(state.abortedSignals.includes('/api/admin/whatsapp-cloud/conversations'), `${scenario}: aborta señal de lista automática`);
+          assert.ok(state.abortedSignals.some(pathname => /\/conversations\/44\/messages$/.test(pathname)), `${scenario}: aborta señal de historial automático`);
+          assert.ok(counts.failedApiRequests.some(entry => entry.path === '/api/admin/whatsapp-cloud/conversations'), `${scenario}: cancela GET de lista anterior`);
+          assert.ok(counts.failedApiRequests.some(entry => /\/conversations\/44\/messages$/.test(entry.path)), `${scenario}: cancela GET de historial anterior`);
+          if (scenario === 'close') {
+            assert.deepEqual(state.ids, initialListIds, 'cerrar conserva la lista vigente');
+            assert.equal(currentListRequests, 1, 'cerrar reanuda un único ciclo de lista sin historial anterior');
+          } else {
+            assert.deepEqual(state.ids, ['45'], 'filtro conserva el DOM del contexto nuevo');
+            assert.equal(currentListRequests, 2, 'filtro ejecuta una carga manual y un único ciclo reanudado');
+          }
+          assert.equal(heldList, true);
+          assert.equal(heldHistory, true);
+        },
+        {
+          refreshDelayMs: 10_000,
+          conversationsResponse: async ({ url }) => {
+            if (holdAutomatic && !heldList && !url.searchParams.get('payment')) {
+              heldList = true;
+              listStarted.resolve();
+              await releaseList.promise;
+              return { status: 403, body: { error: 'actor_forbidden' } };
+            }
+            if (holdAutomatic) currentListRequests += 1;
+            if (url.searchParams.get('payment') === 'transferencia') {
+              return { conversations: [
+                { conversationId: '45', participant: '*********0002', lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'sent' },
+              ], nextCursor: null };
+            }
+            return { conversations: [
+              { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+              { conversationId: '45', participant: '*********0002', lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'sent' },
+            ], nextCursor: null };
+          },
+          messagesResponse: async () => {
+            if (holdAutomatic && !heldHistory) {
+              heldHistory = true;
+              historyStarted.resolve();
+              await releaseHistory.promise;
+              return { status: 401, body: { error: 'session_expired' } };
+            }
+            return { messages: [
+              { id: '1', direction: 'inbound', type: 'text', text: 'hola', deliveryStatus: 'received', messageAt: '2026-10-06T12:00:00Z' },
+            ], nextCursor: null };
+          },
+        },
+      );
+    });
+  }
 });
 
 test('Task 6 browser auto-refresh reemplaza cursor canónico null→valor→nuevo→null en asc y desc', { skip: !existsSync(chromePath) }, async () => {
