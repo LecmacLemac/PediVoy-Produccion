@@ -191,13 +191,16 @@ test('admin queda ligado estrictamente a req.user.empresa_id aunque intente over
   assert.match(calls[0].sql, /WHERE conversation\.empresa_id = \$1/);
 });
 
-test('conversaciones aceptan filtro por rango de fecha y transferencia sin filtrar sólo en browser', async () => {
+test('conversaciones aceptan orden, dirección, tipo y medio de pago sin filtrar sólo en browser', async () => {
   const { app, calls } = createHarness({ role: 'admin', empresaId: 7 });
   await withServer(app, async baseUrl => {
     const qs = new URLSearchParams({
       from: '2026-10-07T00:00:00.000Z',
       to: '2026-10-08T00:00:00.000Z',
-      payment: 'transferencia',
+      payment: 'efectivo',
+      sort: 'asc',
+      direction: 'inbound',
+      messageType: 'audio',
     });
     const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations?${qs}`);
     assert.equal(response.status, 200);
@@ -213,14 +216,17 @@ test('conversaciones aceptan filtro por rango de fecha y transferencia sin filtr
   assert.equal(calls[0].params[5], '2026-10-08T00:00:00.000Z');
   assert.match(calls[0].sql, /message_at >= \$5::timestamptz/);
   assert.match(calls[0].sql, /message_at < \$6::timestamptz/);
-  assert.match(calls[0].sql, /metodo_pago\) = 'transferencia'/);
+  assert.match(calls[0].sql, /\) = \$\d+::text/);
+  assert.match(calls[0].sql, /direction = \$\d+/);
+  assert.match(calls[0].sql, /message_type = \$\d+/);
+  assert.match(calls[0].sql, /ORDER BY filtered\.last_message_activity_key ASC, filtered\.id ASC/);
   assert.match(calls[0].sql, /COALESCE\(pe\.telefono_normalizado, pe\.telefono/);
 });
 
-test('conversaciones rechazan filtros de fecha o pago inválidos', async () => {
+test('conversaciones rechazan filtros de fecha, orden, dirección, tipo o pago inválidos', async () => {
   const { app, calls } = createHarness({ role: 'admin', empresaId: 7 });
   await withServer(app, async baseUrl => {
-    for (const queryString of ['from=hoy', 'to=2026-99-99T00%3A00%3A00.000Z', 'payment=efectivo']) {
+    for (const queryString of ['from=hoy', 'to=2026-99-99T00%3A00%3A00.000Z', 'payment=tarjeta', 'sort=newest', 'direction=incoming', 'messageType=sticker']) {
       const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations?${queryString}`);
       assert.equal(response.status, 400, queryString);
       assert.deepEqual(await response.json(), { error: 'filters_invalid' });
@@ -753,7 +759,7 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
   });
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].params.slice(0, 2), [7, 3]);
-  assert.match(calls[0].sql, /ORDER BY queue_bucket ASC/);
+  assert.match(calls[0].sql, /ORDER BY filtered\.last_message_activity_key DESC, filtered\.id DESC/);
   assert.match(calls[0].sql, /LEFT JOIN LATERAL/);
   assert.match(calls[0].sql, /customer_name/);
   assert.match(calls[0].sql, /delivery_address/);

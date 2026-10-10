@@ -125,17 +125,13 @@ function requireSignedCanonicalInt8(value, field) {
   return value;
 }
 
-function encodeConversationCursor(row) {
+function encodeConversationCursor(row, sort) {
   return Buffer.from(JSON.stringify([
-    Number(row.queue_bucket),
-    Number(row.cursor_priority_rank),
-    String(row.queue_activity_key),
-    String(row.id),
-    String(row.conversation_id),
+    'v2', sort, String(row.last_message_activity_key), String(row.id), String(row.conversation_id),
   ])).toString('base64url');
 }
 
-function decodeConversationCursor(value) {
+function decodeConversationCursor(value, expectedSort) {
   if (value == null) return null;
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(value)) {
     throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid cursor');
@@ -143,14 +139,9 @@ function decodeConversationCursor(value) {
   try {
     const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
     if (!Array.isArray(parsed) || parsed.length !== 5) throw new Error('invalid cursor');
-    const [bucket, priorityRank, activityKey, id, conversationId] = parsed;
-    if (!Number.isInteger(bucket) || bucket < 0 || bucket > 3
-      || !Number.isInteger(priorityRank) || priorityRank < 0 || priorityRank > 2) {
-      throw new Error('invalid cursor');
-    }
+    const [version, sort, activityKey, id, conversationId] = parsed;
+    if (version !== 'v2' || sort !== expectedSort) throw new Error('invalid cursor');
     return {
-      bucket,
-      priorityRank,
       activityKey: requireSignedCanonicalInt8(activityKey, 'cursorActivityKey'),
       id: requireCanonicalInt8(id, 'cursorId'),
       conversationId: requireConversationId(conversationId),
@@ -195,6 +186,9 @@ export async function listCloudConversations({
   from = null,
   to = null,
   payment = null,
+  sort = 'desc',
+  direction = null,
+  messageType = null,
   workflowStatus = null,
   priority = null,
   unread = null,
@@ -209,11 +203,18 @@ export async function listCloudConversations({
   const actorId = requirePositiveInteger(usuarioId, 'usuarioId');
   const pageSize = requirePositiveInteger(limit, 'limit');
   if (pageSize > 100) throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid limit');
-  const pageCursor = decodeConversationCursor(cursor);
+  if (!['asc', 'desc'].includes(sort)) throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid sort');
+  if (direction != null && !['inbound', 'outbound'].includes(direction)) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid direction');
+  }
+  if (messageType != null && !['text', 'image', 'document', 'audio', 'video'].includes(messageType)) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid messageType');
+  }
+  const pageCursor = decodeConversationCursor(cursor, sort);
   const fromFilter = from == null ? null : requireNonEmptyString(from, 'from');
   const toFilter = to == null ? null : requireNonEmptyString(to, 'to');
   const paymentFilter = payment == null ? null : requireNonEmptyString(payment, 'payment').toLowerCase();
-  if (paymentFilter != null && paymentFilter !== 'transferencia') {
+  if (paymentFilter != null && !['transferencia', 'efectivo'].includes(paymentFilter)) {
     throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid payment');
   }
   if (workflowStatus != null && !['pending', 'resolved'].includes(workflowStatus)) {
@@ -234,19 +235,8 @@ export async function listCloudConversations({
     throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid revalidateIds');
   }
   const membershipIds = [...new Set(revalidateIds)];
-  const transferCondition = paymentFilter === 'transferencia'
-    ? `AND EXISTS (
-          SELECT 1
-            FROM public.pedidos p
-            JOIN public.puntos_entrega pe
-              ON pe.id = p.punto_entrega_id
-             AND pe.empresa_id = p.empresa_id
-           WHERE p.empresa_id = conversation.empresa_id
-             AND LOWER(p.metodo_pago) = 'transferencia'
-             AND RIGHT(regexp_replace(COALESCE(pe.telefono_normalizado, pe.telefono, ''), '\\D', '', 'g'), 10)
-                 = RIGHT(regexp_replace(conversation.participant_wa_id, '\\D', '', 'g'), 10)
-       )`
-    : '';
+  const sortDirection = sort === 'asc' ? 'ASC' : 'DESC';
+  const cursorComparator = sort === 'asc' ? '>' : '<';
   const includeCounters = pageCursor == null;
   const countersCte = includeCounters
     ? `, counters AS (
@@ -328,14 +318,40 @@ export async function listCloudConversations({
          JOIN public.whatsapp_cloud_conversations AS conversation
            ON conversation.empresa_id = $1 AND conversation.id = candidate.id`;
   const membershipParameter = searchMode == null ? '$15' : '$18';
+  const extraParameterStart = searchMode == null ? 16 : 19;
+  const directionParameter = `$${extraParameterStart}`;
+  const messageTypeParameter = `$${extraParameterStart + 1}`;
+  const paymentParameter = `$${extraParameterStart + 2}`;
+  const paymentCondition = paymentFilter == null
+    ? `AND ${paymentParameter}::text IS NULL`
+    : `AND (
+            SELECT payment.payment_method
+              FROM public.puntos_entrega AS point
+              JOIN LATERAL (
+                SELECT LOWER(NULLIF(BTRIM(order_row.metodo_pago), '')) AS payment_method,
+                       order_row.fecha, order_row.id
+                  FROM public.pedidos AS order_row
+                 WHERE order_row.empresa_id = point.empresa_id
+                   AND order_row.punto_entrega_id = point.id
+                   AND LOWER(NULLIF(BTRIM(order_row.metodo_pago), '')) IN ('efectivo', 'transferencia')
+                 ORDER BY order_row.fecha DESC NULLS LAST, order_row.id DESC
+                 LIMIT 1
+              ) AS payment ON TRUE
+             WHERE point.empresa_id = $1
+               AND RIGHT(regexp_replace(COALESCE(point.telefono_normalizado, point.telefono, ''), '\\D', '', 'g'), 10)
+                   = RIGHT(regexp_replace(ordered.participant_wa_id, '\\D', '', 'g'), 10)
+             ORDER BY payment.fecha DESC NULLS LAST, payment.id DESC, point.id DESC
+             LIMIT 1
+          ) = ${paymentParameter}::text`;
   const queryParams = [
     tenantId, pageSize + 1, null, pageCursor?.id ?? null, fromFilter, toFilter,
     actorId, workflowStatus, priority, unread,
-    pageCursor?.bucket ?? null, pageCursor?.priorityRank ?? null, pageCursor?.activityKey ?? null,
+    null, null, pageCursor?.activityKey ?? null,
     pageCursor?.conversationId ?? null,
   ];
   if (searchMode != null) queryParams.push(searchText, searchPhoneSuffix, searchOrderId);
   queryParams.push(JSON.stringify(membershipIds));
+  queryParams.push(direction, messageType, paymentFilter);
   let rows;
   try {
     rows = await runQuery(
@@ -395,7 +411,8 @@ export async function listCloudConversations({
            LEFT JOIN inbound_stats AS inbound ON inbound.conversation_id = conversation.id
           WHERE conversation.empresa_id = $1
             AND $3::text IS NULL
-            ${transferCondition}
+            AND $11::text IS NULL
+            AND $12::text IS NULL
        ), classified AS (
          SELECT base.*,
                 CASE
@@ -434,20 +451,28 @@ export async function listCloudConversations({
            ) AS requested
            LEFT JOIN ordered
              ON ordered.conversation_id = requested.id
+            AND (($5::timestamptz IS NULL AND $6::timestamptz IS NULL) OR ordered.id IS NOT NULL)
             AND ($8::text IS NULL OR ordered.workflow_status = $8)
             AND ($9::text IS NULL OR ordered.priority = $9)
             AND ($10::boolean IS NULL OR (ordered.unread_count > 0) = $10)
+            AND (${directionParameter}::text IS NULL OR ordered.direction = ${directionParameter})
+            AND (${messageTypeParameter}::text IS NULL OR ordered.message_type = ${messageTypeParameter})
+            ${paymentCondition}
        )${countersCte}, filtered AS (
          SELECT * FROM ordered
-          WHERE ($8::text IS NULL OR workflow_status = $8)
+          WHERE (($5::timestamptz IS NULL AND $6::timestamptz IS NULL) OR id IS NOT NULL)
+            AND ($8::text IS NULL OR workflow_status = $8)
             AND ($9::text IS NULL OR priority = $9)
             AND ($10::boolean IS NULL OR (unread_count > 0) = $10)
-            AND ($11::integer IS NULL OR (
-                  queue_bucket, cursor_priority_rank, queue_activity_key, id, conversation_id
-                ) > (
-                  $11::integer, $12::integer, $13::bigint, $4::bigint, $14::uuid
-                ))
-          ORDER BY queue_bucket ASC, cursor_priority_rank ASC, queue_activity_key ASC, id ASC, conversation_id ASC
+            AND (${directionParameter}::text IS NULL OR direction = ${directionParameter})
+            AND (${messageTypeParameter}::text IS NULL OR message_type = ${messageTypeParameter})
+            ${paymentCondition}
+            AND ($13::bigint IS NULL OR (
+                last_message_activity_key, id, conversation_id
+              ) ${cursorComparator} (
+                $13::bigint, $4::bigint, $14::uuid
+              ))
+            ORDER BY last_message_activity_key ${sortDirection}, id ${sortDirection}, conversation_id ${sortDirection}
           LIMIT $2
        )
        SELECT filtered.*, customer.customer_name, customer.delivery_address, customer.payment_method,
@@ -473,8 +498,8 @@ export async function listCloudConversations({
                   = RIGHT(regexp_replace(filtered.participant_wa_id, '\\D', '', 'g'), 10)
             ORDER BY payment.fecha DESC NULLS LAST, payment.id DESC, pe.id DESC LIMIT 1
          ) customer ON TRUE
-        ORDER BY filtered.queue_bucket ASC, filtered.cursor_priority_rank ASC,
-                 filtered.queue_activity_key ASC, filtered.id ASC, filtered.conversation_id ASC`,
+        ORDER BY filtered.last_message_activity_key ${sortDirection}, filtered.id ${sortDirection},
+                filtered.conversation_id ${sortDirection}`,
       queryParams,
       { sensitive: true },
     );
@@ -516,7 +541,7 @@ export async function listCloudConversations({
       review: Number(counterRow.review_count) || 0,
       resolved: Number(counterRow.resolved_count) || 0,
     } : null,
-    nextCursor: conversationRows.length > pageSize ? encodeConversationCursor(page[page.length - 1]) : null,
+    nextCursor: conversationRows.length > pageSize ? encodeConversationCursor(page[page.length - 1], sort) : null,
     authoritativeRemovedIds: Array.isArray(counterRow.authoritative_removed_ids)
       ? counterRow.authoritative_removed_ids.map(String)
       : [],
@@ -527,6 +552,7 @@ export async function buildCloudConversationListSql({
   includeCounters = true,
   transferOnly = false,
   searchMode = null,
+  sort = 'desc',
 } = {}) {
   let captured = null;
   await listCloudConversations({
@@ -538,9 +564,10 @@ export async function buildCloudConversationListSql({
     usuarioId: 1,
     limit: 25,
     cursor: includeCounters ? null : Buffer.from(JSON.stringify([
-      0, 0, '0', '1', '00000000-0000-4000-8000-000000000001',
+      'v2', sort, '1791331200000000', '1', '00000000-0000-4000-8000-000000000001',
     ])).toString('base64url'),
     payment: transferOnly ? 'transferencia' : null,
+    sort,
     searchMode: searchMode === 'prefix' ? 'prefix' : searchMode == null ? null : 'substring',
     searchText: searchMode === 'prefix' ? 'al' : searchMode === 'substring' ? 'plan exacto' : 'probe-no-text-match',
     searchPhoneSuffix: searchMode === 'phone' ? '3510017777' : null,

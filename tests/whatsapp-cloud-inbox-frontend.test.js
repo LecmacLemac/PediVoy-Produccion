@@ -84,18 +84,47 @@ test('la pantalla declara layout accesible de lista, chat y volver móvil', asyn
   assert.doesNotMatch(html, /<label\s+for="messageInput"[^>]*hidden/);
 });
 
-test('la bandeja declara filtros rápidos de fecha y transferencias', async () => {
+test('la bandeja cierra filtros por defecto, expone orden y filtros server-side completos', async () => {
   const html = await source(pageUrl);
   const controller = await source(controllerUrl);
+  assert.match(html, /id="filtersToggle"[^>]*aria-expanded="false"/);
+  assert.doesNotMatch(html, /id="filtersToggle"[^>]*mobile-only/);
+  assert.match(html, /id="activeFiltersSummary"/);
+  assert.match(html, /id="clearConversationFilters"[^>]*hidden/);
+  assert.match(html, /id="sortFilter"/);
+  assert.match(html, /value="desc"[^>]*>Más recientes primero/);
+  assert.match(html, /value="asc"[^>]*>Más antiguas primero/);
   assert.match(html, /id="dateFilter"/);
   assert.match(html, /value="today"[^>]*>Hoy/);
   assert.match(html, /value="yesterday"[^>]*>Ayer/);
   assert.match(html, /value="last7"[^>]*>Últimos 7 días/);
-  assert.match(html, /id="transferFilter"/);
-  assert.match(html, /Ver clientes con transferencia/);
+  assert.match(html, /id="paymentFilter"/);
+  assert.match(html, /value="transferencia"[^>]*>Transferencia/);
+  assert.match(html, /value="efectivo"[^>]*>Efectivo/);
+  assert.match(html, /id="directionFilter"/);
+  assert.match(html, /value="inbound"[^>]*>Entrantes/);
+  assert.match(html, /value="outbound"[^>]*>Salientes/);
+  assert.match(html, /id="messageTypeFilter"/);
+  for (const type of ['text', 'image', 'document', 'audio', 'video']) assert.match(html, new RegExp(`value="${type}"`));
   assert.match(controller, /resolveDateFilter/);
   assert.match(controller, /payment:\s*filters\.payment/);
+  assert.match(controller, /sort:\s*filters\.sort/);
+  assert.match(controller, /direction:\s*filters\.direction/);
+  assert.match(controller, /messageType:\s*filters\.messageType/);
   assert.match(controller, /state\.conversationsCursor = null/);
+});
+
+test('historial conserva cronología estable y renderiza separadores seguros por día', async () => {
+  const controller = await source(controllerUrl);
+  assert.match(controller, /history-day-separator/);
+  assert.match(controller, /formatHistoryDay/);
+  assert.match(controller, /fragment\.append\(separator\)/);
+  assert.doesNotMatch(controller, /innerHTML\s*=/);
+  const sameTime = mergeHistoryPage([], [
+    { id: '10', messageAt: '2026-10-06T10:00:00Z' },
+    { id: '2', messageAt: '2026-10-06T10:00:00Z' },
+  ]);
+  assert.deepEqual(sameTime.map(item => item.id), ['2', '10']);
 });
 
 test('la lista de conversaciones muestra nombre, dirección y pago del último pedido sin HTML inseguro', async () => {
@@ -227,14 +256,17 @@ test('URLs Cloud no aceptan tenant global ni campos sensibles', () => {
   assert.equal(
     buildCloudApiUrl('/conversations', {
       role: 'admin', companyId: 7, limit: 25,
-      from: '2026-10-07T00:00:00.000Z', to: '2026-10-08T00:00:00.000Z', payment: 'transferencia',
+      from: '2026-10-07T00:00:00.000Z', to: '2026-10-08T00:00:00.000Z', payment: 'efectivo',
+      sort: 'asc', direction: 'inbound', messageType: 'audio',
     }),
-    '/api/admin/whatsapp-cloud/conversations?limit=25&from=2026-10-07T00%3A00%3A00.000Z&to=2026-10-08T00%3A00%3A00.000Z&payment=transferencia',
+    '/api/admin/whatsapp-cloud/conversations?limit=25&from=2026-10-07T00%3A00%3A00.000Z&to=2026-10-08T00%3A00%3A00.000Z&payment=efectivo&sort=asc&direction=inbound&messageType=audio',
   );
   assert.throws(() => buildCloudApiUrl('/conversations', { role: 'super', companyId: null }), /empresa/i);
   assert.throws(() => buildCloudApiUrl('/conversations', { role: 'super', companyId: 1, phone: '5493515550001' }), /parámetro/i);
   assert.throws(() => buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, from: 'hoy' }), /fecha/i);
-  assert.throws(() => buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, payment: 'efectivo' }), /pago/i);
+  assert.throws(() => buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, sort: 'newest' }), /orden/i);
+  assert.throws(() => buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, direction: 'incoming' }), /dirección/i);
+  assert.throws(() => buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, messageType: 'sticker' }), /tipo/i);
   assert.throws(() => buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, revalidateIds: ['44'] }), /revalidar/i);
 });
 

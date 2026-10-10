@@ -1,5 +1,5 @@
 const API_ROOT = '/api/admin/whatsapp-cloud';
-const ALLOWED_QUERY_KEYS = new Set(['role', 'companyId', 'cursor', 'limit', 'tenantInBody', 'from', 'to', 'payment', 'workflowStatus', 'priority', 'unread', 'revalidateIds']);
+const ALLOWED_QUERY_KEYS = new Set(['role', 'companyId', 'cursor', 'limit', 'tenantInBody', 'from', 'to', 'payment', 'sort', 'direction', 'messageType', 'workflowStatus', 'priority', 'unread', 'revalidateIds']);
 const MASKED_PARTICIPANT = /^\*{3,11}\d{4}$/;
 
 const STATUS = Object.freeze({
@@ -96,8 +96,20 @@ export function buildCloudApiUrl(path, options = {}) {
   if (to) params.set('to', to);
   if (from && to && Date.parse(from) >= Date.parse(to)) throw new Error('Rango de fecha inválido');
   if (options.payment != null && options.payment !== '') {
-    if (options.payment !== 'transferencia') throw new Error('Filtro de pago inválido');
+    if (!['transferencia', 'efectivo'].includes(options.payment)) throw new Error('Filtro de pago inválido');
     params.set('payment', options.payment);
+  }
+  if (options.sort != null && options.sort !== '') {
+    if (!['asc', 'desc'].includes(options.sort)) throw new Error('Orden inválido');
+    params.set('sort', options.sort);
+  }
+  if (options.direction != null && options.direction !== '') {
+    if (!['inbound', 'outbound'].includes(options.direction)) throw new Error('Dirección inválida');
+    params.set('direction', options.direction);
+  }
+  if (options.messageType != null && options.messageType !== '') {
+    if (!['text', 'image', 'document', 'audio', 'video'].includes(options.messageType)) throw new Error('Tipo de mensaje inválido');
+    params.set('messageType', options.messageType);
   }
   if (options.workflowStatus != null && options.workflowStatus !== '') {
     if (!['pending', 'resolved'].includes(options.workflowStatus)) throw new Error('Filtro de workflow inválido');
@@ -203,18 +215,10 @@ function canonicalIntegerKey(value, fallback) {
 }
 
 function conversationOrderTuple(conversation) {
-  const ranks = canonicalQueueRanks(conversation);
-  const bucket = Number.isInteger(conversation.queueBucket) ? conversation.queueBucket : ranks.queueBucket;
-  const priority = Number.isInteger(conversation.queuePriorityRank)
-    ? conversation.queuePriorityRank
-    : ranks.queuePriorityRank;
-  const timestamp = Date.parse(conversation.effectiveActivityAt || conversation.lastMessageAt || 0) || 0;
-  const fallbackActivity = bucket === 0 ? timestamp * 1000 : -timestamp * 1000;
-  const derivedActivity = canonicalActivityKey(conversation, bucket);
+  const parsedTimestamp = Date.parse(conversation.lastMessageAt || 0) || 0;
+  const fallbackActivityKey = BigInt(parsedTimestamp) * 1000n;
   return [
-    bucket,
-    priority,
-    canonicalIntegerKey(derivedActivity ?? conversation.queueActivityKey, fallbackActivity),
+    canonicalIntegerKey(conversation.lastMessageActivityKey, fallbackActivityKey),
     canonicalIntegerKey(conversation.lastMessageId, 0),
     String(conversation.conversationId),
   ];
@@ -224,6 +228,9 @@ function conversationMatchesFilters(conversation, filters = {}) {
   if (filters.workflowStatus && conversation.workflowStatus !== filters.workflowStatus) return false;
   if (filters.priority && conversation.priority !== filters.priority) return false;
   if (filters.unread === true && Number(conversation.unreadCount) <= 0) return false;
+  if (filters.direction && conversation.lastDirection !== filters.direction) return false;
+  if (filters.messageType && conversation.lastMessageType !== filters.messageType) return false;
+  if (filters.payment && conversation.paymentMethod !== filters.payment) return false;
   return true;
 }
 
@@ -244,6 +251,7 @@ function allowlistedConversation(conversation = {}) {
 
 export function mergeCanonicalConversationRefresh({
   current = [], incomingFirstPage = [], previousFirstPageIds = [], authoritativeRemovedIds = [],
+  sort = 'desc',
 } = {}) {
   const removed = new Set(authoritativeRemovedIds.map(String));
   const byId = new Map();
@@ -262,9 +270,10 @@ export function mergeCanonicalConversationRefresh({
   const conversations = [...byId.values()].sort((left, right) => {
     const a = conversationOrderTuple(left);
     const b = conversationOrderTuple(right);
+    const direction = sort === 'asc' ? 1 : -1;
     for (let index = 0; index < a.length; index += 1) {
-      if (a[index] < b[index]) return -1;
-      if (a[index] > b[index]) return 1;
+      if (a[index] < b[index]) return -1 * direction;
+      if (a[index] > b[index]) return direction;
     }
     return 0;
   });
@@ -418,9 +427,10 @@ export function reconcileConversationCollection({
     conversations: merged.filter(item => conversationMatchesFilters(item, filters)).sort((left, right) => {
       const a = conversationOrderTuple(left);
       const b = conversationOrderTuple(right);
+      const direction = filters.sort === 'asc' ? 1 : -1;
       for (let index = 0; index < a.length; index += 1) {
-        if (a[index] < b[index]) return -1;
-        if (a[index] > b[index]) return 1;
+        if (a[index] < b[index]) return -1 * direction;
+        if (a[index] > b[index]) return direction;
       }
       return 0;
     }),

@@ -179,7 +179,10 @@ function conversationFilters(query) {
   const to = strictIsoUtc(query?.to);
   if (from === undefined || to === undefined) return null;
   const payment = query?.payment == null || query.payment === '' ? null : String(query.payment);
-  if (payment != null && payment !== 'transferencia') return null;
+  const sort = query?.sort == null || query.sort === '' ? 'desc' : String(query.sort);
+  const direction = query?.direction == null || query.direction === '' ? null : String(query.direction);
+  const messageType = query?.messageType == null || query.messageType === '' ? null : String(query.messageType);
+  if (payment != null && !['transferencia', 'efectivo'].includes(payment)) return null;
   const workflowStatus = query?.workflowStatus == null || query.workflowStatus === ''
     ? null : String(query.workflowStatus);
   const priority = query?.priority == null || query.priority === '' ? null : String(query.priority);
@@ -188,9 +191,12 @@ function conversationFilters(query) {
     : query.unread === 'true' ? true : query.unread === 'false' ? false : undefined;
   if (workflowStatus != null && !['pending', 'resolved'].includes(workflowStatus)) return null;
   if (priority != null && !['normal', 'high', 'urgent'].includes(priority)) return null;
+  if (!['asc', 'desc'].includes(sort)) return null;
+  if (direction != null && !['inbound', 'outbound'].includes(direction)) return null;
+  if (messageType != null && !['text', 'image', 'document', 'audio', 'video'].includes(messageType)) return null;
   if (unread === undefined) return null;
   if (from && to && Date.parse(from) >= Date.parse(to)) return null;
-  return { from, to, payment, workflowStatus, priority, unread };
+  return { from, to, payment, sort, direction, messageType, workflowStatus, priority, unread };
 }
 
 function conversationRevalidateIds(query) {
@@ -207,7 +213,7 @@ function validConversationSearch(req) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
   const allowed = new Set([
     'query', 'empresa_id', 'limit', 'cursor', 'from', 'to', 'payment',
-    'workflowStatus', 'priority', 'unreadOnly',
+    'workflowStatus', 'priority', 'unreadOnly', 'sort', 'direction', 'messageType',
   ]);
   if (Object.keys(body).some(key => !allowed.has(key))) return null;
   if (typeof body.query !== 'string') return null;
@@ -221,14 +227,20 @@ function validConversationSearch(req) {
   const to = strictIsoUtc(body.to);
   if (from === undefined || to === undefined || (from && to && Date.parse(from) >= Date.parse(to))) return null;
   const payment = body.payment == null || body.payment === '' ? null : body.payment;
-  if (payment != null && payment !== 'transferencia') return null;
+  if (payment != null && !['transferencia', 'efectivo'].includes(payment)) return null;
+  const sort = body.sort == null || body.sort === '' ? 'desc' : body.sort;
+  const direction = body.direction == null || body.direction === '' ? null : body.direction;
+  const messageType = body.messageType == null || body.messageType === '' ? null : body.messageType;
+  if (!['asc', 'desc'].includes(sort)) return null;
+  if (direction != null && !['inbound', 'outbound'].includes(direction)) return null;
+  if (messageType != null && !['text', 'image', 'document', 'audio', 'video'].includes(messageType)) return null;
   const workflowStatus = body.workflowStatus == null || body.workflowStatus === '' ? null : body.workflowStatus;
   if (workflowStatus != null && !['pending', 'resolved'].includes(workflowStatus)) return null;
   const priority = body.priority == null || body.priority === '' ? null : body.priority;
   if (priority != null && !['normal', 'high', 'urgent'].includes(priority)) return null;
   const unread = body.unreadOnly == null ? null : body.unreadOnly;
   if (unread != null && typeof unread !== 'boolean') return null;
-  return { searchQuery, limit, cursor, from, to, payment, workflowStatus, priority, unread };
+  return { searchQuery, limit, cursor, from, to, payment, sort, direction, messageType, workflowStatus, priority, unread };
 }
 
 function resolveSearchTenant(req) {

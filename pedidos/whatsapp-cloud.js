@@ -44,10 +44,15 @@ const elements = {
   conversationsMore: document.querySelector('#loadMoreConversations'),
   refresh: document.querySelector('#refreshConversations'),
   dateFilter: document.querySelector('#dateFilter'),
-  transferFilter: document.querySelector('#transferFilter'),
+  sortFilter: document.querySelector('#sortFilter'),
+  paymentFilter: document.querySelector('#paymentFilter'),
+  directionFilter: document.querySelector('#directionFilter'),
+  messageTypeFilter: document.querySelector('#messageTypeFilter'),
   workflowFilter: document.querySelector('#workflowFilter'),
   priorityFilter: document.querySelector('#priorityFilter'),
   unreadFilter: document.querySelector('#unreadFilter'),
+  activeFiltersSummary: document.querySelector('#activeFiltersSummary'),
+  clearFilters: document.querySelector('#clearConversationFilters'),
   queueCounters: document.querySelector('#queueCounters'),
   filtersToggle: document.querySelector('#filtersToggle'),
   queueFilters: document.querySelector('#queueFilters'),
@@ -225,6 +230,18 @@ function toggleContextPanel() {
   else openOverlay('context', elements.contextToggle);
 }
 
+function toggleFiltersPanel() {
+  if (isDesktopLayout()) {
+    const open = elements.queueFilters.dataset.open !== 'true';
+    elements.queueFilters.dataset.open = String(open);
+    elements.filtersToggle.setAttribute('aria-expanded', String(open));
+    if (open) elements.queueFilters.querySelector('select,input,button')?.focus({ preventScroll: true });
+    return;
+  }
+  if (activeOverlay === 'filters') closeOverlay();
+  else openOverlay('filters', elements.filtersToggle);
+}
+
 function startOfLocalDay(date = new Date()) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
@@ -262,11 +279,28 @@ function currentFilters() {
   const dateRange = resolveDateFilter(elements.dateFilter?.value);
   return {
     ...dateRange,
-    payment: elements.transferFilter?.checked ? 'transferencia' : null,
+    sort: elements.sortFilter?.value || 'desc',
+    payment: elements.paymentFilter?.value || null,
+    direction: elements.directionFilter?.value || null,
+    messageType: elements.messageTypeFilter?.value || null,
     workflowStatus: elements.workflowFilter?.value || null,
     priority: elements.priorityFilter?.value || null,
     unread: elements.unreadFilter?.checked ? true : null,
   };
+}
+
+function syncActiveFiltersSummary() {
+  const labels = [];
+  if (elements.dateFilter?.value && elements.dateFilter.value !== 'all') labels.push(elements.dateFilter.selectedOptions[0]?.textContent);
+  if (elements.sortFilter?.value === 'asc') labels.push('Más antiguas primero');
+  if (elements.paymentFilter?.value) labels.push(`Pago: ${elements.paymentFilter.selectedOptions[0]?.textContent}`);
+  if (elements.directionFilter?.value) labels.push(elements.directionFilter.selectedOptions[0]?.textContent);
+  if (elements.messageTypeFilter?.value) labels.push(`Tipo: ${elements.messageTypeFilter.selectedOptions[0]?.textContent}`);
+  if (elements.workflowFilter?.value) labels.push(elements.workflowFilter.selectedOptions[0]?.textContent);
+  if (elements.priorityFilter?.value) labels.push(elements.priorityFilter.selectedOptions[0]?.textContent);
+  if (elements.unreadFilter?.checked) labels.push('Sólo no leídas');
+  elements.activeFiltersSummary.textContent = labels.length ? labels.join(' · ') : 'Sin filtros activos';
+  elements.clearFilters.hidden = labels.length === 0;
 }
 
 function setStatus(message, tone = 'neutral') {
@@ -417,7 +451,10 @@ function syncContextControls() {
   const companySelect = elements.companyWrap.querySelector('select');
   if (companySelect) companySelect.disabled = locked;
   if (elements.dateFilter) elements.dateFilter.disabled = locked;
-  if (elements.transferFilter) elements.transferFilter.disabled = locked;
+  if (elements.sortFilter) elements.sortFilter.disabled = locked;
+  if (elements.paymentFilter) elements.paymentFilter.disabled = locked;
+  if (elements.directionFilter) elements.directionFilter.disabled = locked;
+  if (elements.messageTypeFilter) elements.messageTypeFilter.disabled = locked;
   if (elements.workflowFilter) elements.workflowFilter.disabled = locked;
   if (elements.priorityFilter) elements.priorityFilter.disabled = locked;
   if (elements.unreadFilter) elements.unreadFilter.disabled = locked;
@@ -692,6 +729,9 @@ async function submitConversationSearch(event, { append = false } = {}) {
     ...(filters.from ? { from: filters.from } : {}),
     ...(filters.to ? { to: filters.to } : {}),
     ...(filters.payment ? { payment: filters.payment } : {}),
+    sort: filters.sort,
+    ...(filters.direction ? { direction: filters.direction } : {}),
+    ...(filters.messageType ? { messageType: filters.messageType } : {}),
     ...(filters.workflowStatus ? { workflowStatus: filters.workflowStatus } : {}),
     ...(filters.priority ? { priority: filters.priority } : {}),
     ...(filters.unread === true ? { unreadOnly: true } : {}),
@@ -761,13 +801,32 @@ function renderAttachment(message, container) {
   container.append(card);
 }
 
+function formatHistoryDay(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Fecha desconocida';
+  return new Intl.DateTimeFormat('es-AR', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  }).format(date);
+}
+
 function renderHistory({ preserveScroll = false, live = false, wasAtBottom = true, newMessageCount = 0 } = {}) {
   const previousHeight = elements.history.scrollHeight;
   const previousTop = elements.history.scrollTop;
   const liveAnchor = live && !wasAtBottom ? captureVisibleScrollAnchor(elements.history) : null;
   const fragment = document.createDocumentFragment();
   if (!state.messages.length) appendSafeText(document, fragment, 'p', 'Todavía no hay mensajes.', 'empty-state');
+  let renderedDay = null;
   for (const message of state.messages) {
+    const messageDate = new Date(message.messageAt);
+    const dayKey = Number.isNaN(messageDate.getTime()) ? 'unknown' : `${messageDate.getFullYear()}-${messageDate.getMonth()}-${messageDate.getDate()}`;
+    if (dayKey !== renderedDay) {
+      const separator = document.createElement('div');
+      separator.className = 'history-day-separator';
+      separator.setAttribute('role', 'separator');
+      separator.textContent = formatHistoryDay(message.messageAt);
+      fragment.append(separator);
+      renderedDay = dayKey;
+    }
     const article = document.createElement('article');
     const direction = message.direction === 'outbound' ? 'outbound' : 'inbound';
     article.className = `message message-${direction}`;
@@ -816,6 +875,9 @@ async function performConversationLoad({ append = false } = {}) {
       from: filters.from,
       to: filters.to,
       payment: filters.payment,
+      sort: filters.sort,
+      direction: filters.direction,
+      messageType: filters.messageType,
       workflowStatus: filters.workflowStatus,
       priority: filters.priority,
       unread: filters.unread,
@@ -1004,7 +1066,8 @@ async function autoRefreshConversations(signal) {
   };
   const url = buildCloudApiUrl('/conversations', {
     role: state.role, companyId: state.companyId, limit: 25,
-    from: filters.from, to: filters.to, payment: filters.payment,
+    from: filters.from, to: filters.to, payment: filters.payment, sort: filters.sort,
+    direction: filters.direction, messageType: filters.messageType,
     workflowStatus: filters.workflowStatus, priority: filters.priority, unread: filters.unread,
     revalidateIds: [...new Set([
       ...state.canonicalFirstPageIds,
@@ -1024,6 +1087,7 @@ async function autoRefreshConversations(signal) {
     incomingFirstPage: Array.isArray(payload.conversations) ? payload.conversations : [],
     previousFirstPageIds: state.canonicalFirstPageIds,
     authoritativeRemovedIds: Array.isArray(payload.authoritativeRemovedIds) ? payload.authoritativeRemovedIds : [],
+    sort: filters.sort,
   });
   state.canonicalConversations = merged.conversations;
   state.canonicalFirstPageIds = merged.firstPageIds;
@@ -1396,10 +1460,7 @@ async function bootstrap() {
 }
 
 elements.back.addEventListener('click', () => clearChat());
-elements.filtersToggle.addEventListener('click', () => {
-  if (activeOverlay === 'filters') closeOverlay();
-  else openOverlay('filters', elements.filtersToggle);
-});
+elements.filtersToggle.addEventListener('click', toggleFiltersPanel);
 elements.contextToggle.addEventListener('click', toggleContextPanel);
 elements.contextClose.addEventListener('click', () => {
   if (isDesktopLayout()) {
@@ -1440,14 +1501,29 @@ elements.conversationsMore.addEventListener('click', () => {
 });
 elements.refresh.addEventListener('click', () => reloadConversationsFromStart({ preserveActiveConversation: true }));
 const reloadForFilterChange = () => {
+  syncActiveFiltersSummary();
   clearConversationSearch({ restore: false });
   reloadConversationsFromStart();
 };
 elements.dateFilter?.addEventListener('change', reloadForFilterChange);
-elements.transferFilter?.addEventListener('change', reloadForFilterChange);
+elements.sortFilter?.addEventListener('change', reloadForFilterChange);
+elements.paymentFilter?.addEventListener('change', reloadForFilterChange);
+elements.directionFilter?.addEventListener('change', reloadForFilterChange);
+elements.messageTypeFilter?.addEventListener('change', reloadForFilterChange);
 elements.workflowFilter?.addEventListener('change', reloadForFilterChange);
 elements.priorityFilter?.addEventListener('change', reloadForFilterChange);
 elements.unreadFilter?.addEventListener('change', reloadForFilterChange);
+elements.clearFilters.addEventListener('click', () => {
+  elements.dateFilter.value = 'all';
+  elements.sortFilter.value = 'desc';
+  elements.paymentFilter.value = '';
+  elements.directionFilter.value = '';
+  elements.messageTypeFilter.value = '';
+  elements.workflowFilter.value = '';
+  elements.priorityFilter.value = '';
+  elements.unreadFilter.checked = false;
+  reloadForFilterChange();
+});
 elements.conversationWorkflow.addEventListener('click', () => {
   if (!state.activeConversation) return;
   const workflowStatus = state.activeConversation.workflowStatus === 'resolved' ? 'pending' : 'resolved';
@@ -1515,4 +1591,5 @@ window.addEventListener('pagehide', () => autoRefreshScheduler.stop());
 window.addEventListener('beforeunload', () => autoRefreshScheduler.stop());
 
 syncResponsiveChrome();
+syncActiveFiltersSummary();
 bootstrap();

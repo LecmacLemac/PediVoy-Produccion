@@ -479,7 +479,7 @@ test('super se revalida exacto, activo y global dentro de la transacción', asyn
   });
 });
 
-test('listado aplica contadores pre-filtro y orden pending urgent/high/normal, review incluido manual_retry, inProcess, resolved', async () => {
+test('listado aplica contadores pre-filtro y orden por última actividad descendente por defecto', async () => {
   await withDatabase(async pool => {
     await pool.query("INSERT INTO empresas(id) VALUES (1); INSERT INTO usuarios(id,username,password,role,empresa_id) VALUES (11,'a','x','admin',1)");
     const participants = ['5493515550101','5493515550102','5493515550103','5493515550104','5493515550105','5493515550106','5493515550107'];
@@ -504,7 +504,7 @@ test('listado aplica contadores pre-filtro y orden pending urgent/high/normal, r
     const query = async (sql, params) => (await pool.query(sql, params)).rows;
     const all = await listCloudConversations({ query, empresaId: 1, usuarioId: 11 });
     assert.deepEqual(all.conversations.map(item => item.participant), [
-      ...participants.slice(0, 3), participants[6], ...participants.slice(3, 6),
+      participants[4], participants[6], participants[3], participants[5], ...participants.slice(0, 3).reverse(),
     ].map(value => `*********${value.slice(-4)}`));
     assert.deepEqual(all.counters, { total: 7, pending: 3, inProcess: 1, review: 2, resolved: 1 });
     for (const item of all.conversations) {
@@ -525,7 +525,7 @@ test('listado aplica contadores pre-filtro y orden pending urgent/high/normal, r
   });
 });
 
-test('cursor pagina buckets no-pending sin depender de prioridad invisible en el ORDER BY', async () => {
+test('cursor v2 queda ligado al orden y pagina fecha asc/desc sin mezclar cursores', async () => {
   await withDatabase(async pool => {
     await pool.query("INSERT INTO empresas(id) VALUES (1); INSERT INTO usuarios(id,username,password,role,empresa_id) VALUES (11,'a','x','admin',1)");
     const olderUrgent = '5493515550201';
@@ -544,12 +544,67 @@ test('cursor pagina buckets no-pending sin depender de prioridad invisible en el
     await pool.query("UPDATE whatsapp_cloud_conversations SET priority='high' WHERE participant_wa_id=$1", [newerHigh]);
     const query = async (sql, params) => (await pool.query(sql, params)).rows;
 
-    const first = await listCloudConversations({ query, empresaId: 1, usuarioId: 11, limit: 1 });
+    const first = await listCloudConversations({ query, empresaId: 1, usuarioId: 11, limit: 1, sort: 'desc' });
     assert.equal(first.conversations[0].participant, `*********${newerHigh.slice(-4)}`);
     assert.equal(typeof first.nextCursor, 'string');
-    const second = await listCloudConversations({ query, empresaId: 1, usuarioId: 11, limit: 1, cursor: first.nextCursor });
+    const second = await listCloudConversations({ query, empresaId: 1, usuarioId: 11, limit: 1, sort: 'desc', cursor: first.nextCursor });
     assert.equal(second.conversations[0].participant, `*********${olderUrgent.slice(-4)}`);
     assert.equal(second.nextCursor, null);
+    await assert.rejects(
+      listCloudConversations({ query, empresaId: 1, usuarioId: 11, limit: 1, sort: 'asc', cursor: first.nextCursor }),
+      error => error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT',
+    );
+    const oldest = await listCloudConversations({ query, empresaId: 1, usuarioId: 11, limit: 1, sort: 'asc' });
+    assert.equal(oldest.conversations[0].participant, `*********${olderUrgent.slice(-4)}`);
+  });
+});
+
+test('cursor conserva precisión de microsegundos al paginar actividad dentro del mismo milisegundo', async () => {
+  await withDatabase(async pool => {
+    await pool.query("INSERT INTO empresas(id) VALUES (1); INSERT INTO usuarios(id,username,password,role,empresa_id) VALUES (11,'a','x','admin',1)");
+    await pool.query(`INSERT INTO whatsapp_cloud_conversations(empresa_id,participant_wa_id) VALUES
+      (1,'5493515550401'),(1,'5493515550402')`);
+    await pool.query(`INSERT INTO whatsapp_cloud_messages
+      (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at) VALUES
+      (1,'inbound','5493515550401','text','más reciente','received',0,'2026-10-07T10:00:00.000900Z',NOW(),NOW()),
+      (1,'inbound','5493515550402','text','más antiguo','received',0,'2026-10-07T10:00:00.000100Z',NOW(),NOW())`);
+    const query = async (sql, params) => (await pool.query(sql, params)).rows;
+    const first = await listCloudConversations({ query, empresaId: 1, usuarioId: 11, limit: 1, sort: 'desc' });
+    const second = await listCloudConversations({ query, empresaId: 1, usuarioId: 11, limit: 1, sort: 'desc', cursor: first.nextCursor });
+    assert.deepEqual(
+      [...first.conversations, ...second.conversations].map(item => item.participant),
+      ['*********0401', '*********0402'],
+    );
+    assert.equal(second.nextCursor, null);
+  });
+});
+
+test('filtros de último mensaje y último medio de pago son tenant-scoped y paginables', async () => {
+  await withDatabase(async pool => {
+    await pool.query("INSERT INTO empresas(id) VALUES (1),(2); INSERT INTO usuarios(id,username,password,role,empresa_id) VALUES (11,'a','x','admin',1)");
+    await pool.query(`INSERT INTO puntos_entrega(empresa_id,cliente,telefono_normalizado) VALUES
+      (1,'Uno','5493515550301'),(1,'Dos','5493515550302'),(2,'Ajeno','5493515550301')`);
+    const points = (await pool.query('SELECT id,empresa_id FROM puntos_entrega ORDER BY empresa_id,id')).rows;
+    await pool.query(`INSERT INTO pedidos(empresa_id,punto_entrega_id,metodo_pago,fecha) VALUES
+      (1,$1,'transferencia','2026-10-01'),(1,$1,'efectivo','2026-10-03'),
+      (1,$2,'transferencia','2026-10-02'),(2,$3,'transferencia','2026-10-04')`,
+    [points[0].id, points[1].id, points[2].id]);
+    await pool.query(`INSERT INTO whatsapp_cloud_conversations(empresa_id,participant_wa_id) VALUES
+      (1,'5493515550301'),(1,'5493515550302'),(2,'5493515550301')`);
+    await pool.query(`INSERT INTO whatsapp_cloud_messages
+      (empresa_id,direction,participant_wa_id,message_type,text_body,media_mime_type,media_caption,document_filename,delivery_status,state_rank,message_at,sent_at,created_at,updated_at) VALUES
+      (1,'outbound','5493515550301','text','salida',NULL,NULL,NULL,'sent',30,'2026-10-07T09:00Z','2026-10-07T09:00Z',NOW(),NOW()),
+      (1,'inbound','5493515550301','image',NULL,'image/jpeg','foto',NULL,'received',0,'2026-10-07T10:00Z',NULL,NOW(),NOW()),
+      (1,'inbound','5493515550302','document',NULL,'application/pdf',NULL,'a.pdf','received',0,'2026-10-07T11:00Z',NULL,NOW(),NOW()),
+      (2,'inbound','5493515550301','image',NULL,'image/jpeg','ajeno',NULL,'received',0,'2026-10-07T12:00Z',NULL,NOW(),NOW())`);
+    const query = async (sql, params) => (await pool.query(sql, params)).rows;
+    const filtered = await listCloudConversations({
+      query, empresaId: 1, usuarioId: 11, direction: 'inbound', messageType: 'image', payment: 'efectivo', sort: 'asc', limit: 1,
+    });
+    assert.deepEqual(filtered.conversations.map(item => [item.participant, item.paymentMethod, item.lastMessageType]), [
+      ['*********0301', 'efectivo', 'image'],
+    ]);
+    assert.equal(filtered.nextCursor, null);
   });
 });
 

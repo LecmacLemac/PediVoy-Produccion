@@ -397,7 +397,7 @@ test('reconciliación local aplica filtros activos, orden canónico y preserva c
     conversations: [normal, urgent], current: { conversationId: normal.conversationId, priority: 'urgent', version: 2 },
     filters: { workflowStatus: 'pending', priority: null, unread: true }, activeConversationId: normal.conversationId,
   });
-  assert.deepEqual(moved.conversations.map(item => item.conversationId), [normal.conversationId, urgent.conversationId]);
+  assert.deepEqual(moved.conversations.map(item => item.conversationId), [urgent.conversationId, normal.conversationId]);
   assert.equal(moved.activeConversation.priority, 'urgent');
   const removed = reconcileConversationCollection({
     conversations: moved.conversations, current: { conversationId: normal.conversationId, workflowStatus: 'resolved', version: 3 },
@@ -473,7 +473,7 @@ test('mutaciones reconcilian contadores desde el chat completo aunque la tarjeta
   assert.deepEqual(refreshedUnread.counters, { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 });
 });
 
-test('orden local usa exactamente actividad efectiva, último message ID y UUID canónicos', () => {
+test('orden local usa última actividad, último message ID y UUID canónicos', () => {
   const laterOutbound = {
     conversationId: '11111111-1111-4111-8111-111111111111', workflowStatus: 'pending', priority: 'high',
     unreadCount: 1, lastDirection: 'outbound', lastDeliveryStatus: 'sent',
@@ -496,7 +496,7 @@ test('orden local usa exactamente actividad efectiva, último message ID y UUID 
     counters: { total: 3, pending: 3, inProcess: 0, review: 0, resolved: 0 },
   });
   assert.deepEqual(mutated.conversations.map(item => item.conversationId), [
-    laterOutbound.conversationId, tiedHigherMessage.conversationId, laterInbound.conversationId,
+    tiedHigherMessage.conversationId, laterOutbound.conversationId, laterInbound.conversationId,
   ]);
   assert.equal(mutated.activeConversation.queuePriorityRank, 0);
   assert.equal(mutated.activeConversation.queueActivityKey, '1791367200000000');

@@ -75,16 +75,20 @@ test('Task 6 restaura el mismo píxel del ancla y usa previousTop si desaparece'
 });
 
 test('Task 6 merge canónico actualiza e inserta sin duplicar ni perder páginas antiguas', () => {
-  const oldFirst = { conversationId: 'a', participant: '*********0001', version: 1, priority: 'normal', queueBucket: 0, queuePriorityRank: 2, queueActivityKey: '10', lastMessageId: '10' };
-  const older = { conversationId: 'b', participant: '*********0002', version: 1, priority: 'normal', queueBucket: 3, queuePriorityRank: 0, queueActivityKey: '-5', lastMessageId: '5' };
+  const oldFirst = { conversationId: 'a', participant: '*********0001', version: 1, priority: 'normal', queueBucket: 0, queuePriorityRank: 2, queueActivityKey: '10', lastMessageId: '10', lastMessageAt: '2026-10-08T10:00:00Z' };
+  const older = { conversationId: 'b', participant: '*********0002', version: 1, priority: 'normal', queueBucket: 3, queuePriorityRank: 0, queueActivityKey: '-5', lastMessageId: '5', lastMessageAt: '2026-10-08T09:00:00Z' };
   const updated = { ...oldFirst, version: 2, priority: 'urgent', queuePriorityRank: 0, queueActivityKey: '20', privateField: 'no' };
-  const inserted = { ...oldFirst, conversationId: 'c', participant: '*********0003', queueActivityKey: '30', lastMessageId: '30' };
+  const inserted = { ...oldFirst, conversationId: 'c', participant: '*********0003', queueActivityKey: '30', lastMessageId: '30', lastMessageAt: '2026-10-08T11:00:00Z' };
   const result = mergeCanonicalConversationRefresh({
     current: [oldFirst, older],
     incomingFirstPage: [inserted, updated, updated],
     previousFirstPageIds: ['a'],
   });
-  assert.deepEqual(result.conversations.map(item => item.conversationId), ['a', 'c', 'b']);
+  assert.deepEqual(result.conversations.map(item => item.conversationId), ['c', 'a', 'b']);
+  const oldest = mergeCanonicalConversationRefresh({
+    current: [oldFirst, older], incomingFirstPage: [inserted, updated], sort: 'asc',
+  });
+  assert.deepEqual(oldest.conversations.map(item => item.conversationId), ['b', 'a', 'c']);
   assert.equal(result.conversations.find(item => item.conversationId === 'a').version, 2);
   assert.equal(Object.hasOwn(result.conversations.find(item => item.conversationId === 'a'), 'privateField'), false);
   assert.deepEqual(result.firstPageIds, ['c', 'a']);

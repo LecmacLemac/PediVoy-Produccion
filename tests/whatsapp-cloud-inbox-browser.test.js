@@ -1559,3 +1559,46 @@ test('Task 7 reintenta contexto visible con GET cercado y limpia el error', { sk
     },
   });
 });
+
+test('visibilidad: desktop inicia filtros cerrados, aplica filtros server-side y separa historial por día', { skip: !existsSync(chromePath) }, async () => {
+  await withBrowserPage({ width: 1280, height: 900, deviceScaleFactor: 1 }, async ({ page, counts }) => {
+    const initial = await page.evaluate(() => ({
+      open: document.querySelector('#queueFilters').dataset.open,
+      expanded: document.querySelector('#filtersToggle').getAttribute('aria-expanded'),
+      overlay: document.querySelector('#inboxLayout').dataset.overlayOpen,
+      listHeight: document.querySelector('#conversationList').clientHeight,
+    }));
+    assert.equal(initial.open, 'false');
+    assert.equal(initial.expanded, 'false');
+    assert.equal(initial.overlay, undefined);
+    assert.ok(initial.listHeight > 300);
+    await clickCurrent(page, '#filtersToggle');
+    assert.deepEqual(await page.evaluate(() => ({
+      open: document.querySelector('#queueFilters').dataset.open,
+      expanded: document.querySelector('#filtersToggle').getAttribute('aria-expanded'),
+      role: document.querySelector('#queueFilters').getAttribute('role'),
+      overlay: document.querySelector('#inboxLayout').dataset.overlayOpen,
+    })), { open: 'true', expanded: 'true', role: null });
+    await page.select('#sortFilter', 'asc');
+    await page.select('#directionFilter', 'inbound');
+    await page.select('#messageTypeFilter', 'image');
+    await page.select('#paymentFilter', 'efectivo');
+    await page.waitForFunction(() => document.querySelector('#activeFiltersSummary').textContent.includes('Efectivo'));
+    const listRequests = counts.apiRequests.filter(entry => entry.path.endsWith('/conversations'));
+    const latest = new URLSearchParams(listRequests.at(-1).query);
+    assert.equal(latest.get('sort'), 'asc');
+    assert.equal(latest.get('direction'), 'inbound');
+    assert.equal(latest.get('messageType'), 'image');
+    assert.equal(latest.get('payment'), 'efectivo');
+    assert.equal(await page.$eval('#clearConversationFilters', button => button.hidden), false);
+    await clickCurrent(page, '#clearConversationFilters');
+    await page.waitForFunction(() => document.querySelector('#activeFiltersSummary').textContent === 'Sin filtros activos');
+    await openConversationAndWait(page);
+    assert.equal(await page.$$eval('.history-day-separator', nodes => nodes.length), 2);
+  }, {
+    messagesResponse: async () => ({ messages: [
+      { id: '1', direction: 'inbound', type: 'text', text: 'día uno', deliveryStatus: 'received', messageAt: '2026-10-06T12:00:00Z' },
+      { id: '2', direction: 'inbound', type: 'text', text: 'día dos', deliveryStatus: 'received', messageAt: '2026-10-07T12:00:00Z' },
+    ], nextCursor: null }),
+  });
+});

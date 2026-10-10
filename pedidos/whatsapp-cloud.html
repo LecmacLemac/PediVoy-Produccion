@@ -64,7 +64,11 @@
     select,textarea,input[type="search"] { width:100%; min-width:0; color:var(--wc-text); background:#0b1321; border:1px solid var(--wc-border); border-radius:8px; padding:8px 10px; }
     select { min-height:36px; }
     .search-form { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:6px; }
-    .queue-filters { display:grid; gap:8px; }
+    .queue-filters { display:none; gap:8px; padding-top:8px; border-top:1px solid var(--wc-border); }
+    .queue-filters[data-open="true"] { display:grid; }
+    .filter-summary-row { min-height:26px; display:flex; align-items:center; gap:8px; }
+    .active-filters-summary { min-width:0; flex:1 1 auto; color:var(--wc-muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .clear-filters { min-height:30px; padding:4px 8px; }
     .quick-filters { align-items:stretch; }
     .quick-filters select { flex:1 1 120px; width:auto; }
     .filter-row { display:grid; grid-template-columns:1fr; gap:8px; }
@@ -100,6 +104,8 @@
     #loadOlderMessages { align-self:center; width:auto; margin:8px; }
     #newMessagesIndicator { position:absolute; z-index:2; left:50%; bottom:10px; transform:translateX(-50%); width:auto; }
     .message-history { flex:1 1 auto; min-height:0; overflow:auto; padding:16px clamp(12px,3vw,32px); display:flex; flex-direction:column; gap:10px; overscroll-behavior:contain; scrollbar-gutter:stable; }
+    .history-day-separator { align-self:stretch; display:flex; align-items:center; gap:10px; color:var(--wc-muted); font-size:11px; font-weight:750; text-transform:uppercase; letter-spacing:.04em; }
+    .history-day-separator::before,.history-day-separator::after { content:""; height:1px; flex:1 1 auto; background:var(--wc-border); }
     .message { max-width:min(78%,720px); padding:10px 12px; border:1px solid var(--wc-border); border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,.12); }
     .message-inbound { align-self:flex-start; background:#172338; border-bottom-left-radius:4px; }
     .message-outbound { align-self:flex-end; background:#123523; border-color:rgba(37,211,102,.24); border-bottom-right-radius:4px; }
@@ -151,7 +157,6 @@
       .context-panel[data-open="true"] { display:flex; }
       .context-panel[data-open="true"] + .overlay-backdrop,.inbox[data-overlay-open="true"] .overlay-backdrop { display:block; }
       .desktop-only { display:none; }
-      #filtersToggle { display:inline-flex; }
       .queue-filters { display:none; position:fixed; z-index:51; left:8px; right:8px; bottom:max(8px,env(safe-area-inset-bottom)); max-height:min(72dvh,620px); overflow:auto; padding:12px; border:1px solid var(--wc-border-strong); border-radius:12px; background:var(--wc-panel-2); box-shadow:0 -16px 45px rgba(0,0,0,.4); }
       .queue-filters[data-open="true"] { display:grid; }
     }
@@ -164,6 +169,7 @@
       .cloud-nav a { min-width:44px; min-height:44px; justify-content:center; }
       .icon-button,.secondary-button,.attachment-action,.quick-reply-item { min-width:44px; min-height:44px; }
       select,input[type="search"],textarea,.transfer-toggle,.quick-replies summary { min-height:44px; }
+      .filter-row { grid-template-columns:repeat(2,minmax(0,1fr)); }
       .context-panel[data-open="true"] { bottom:var(--wc-composer-clearance,0px); }
     }
 
@@ -193,6 +199,7 @@
       .title-tools .sync-status { display:none; }
       .icon-button,.secondary-button,.attachment-action,.quick-reply-item,select,.transfer-toggle { min-height:44px; }
       .quick-filters { display:grid; grid-template-columns:1fr; }
+      .filter-row { grid-template-columns:1fr; }
       .search-form { grid-template-columns:minmax(0,1fr) auto; }
       #conversationSearchClear { grid-column:1/-1; width:100%; }
       .conversation-card { min-height:92px; padding:11px; }
@@ -240,7 +247,7 @@
         <header class="pane-head">
           <div class="title-row">
             <h1 id="conversationHeading" tabindex="-1">Conversaciones</h1>
-            <div class="title-tools"><span id="syncStatus" class="sync-status" data-state="updated" aria-live="polite">Actualizado</span><button id="filtersToggle" class="icon-button mobile-only" type="button" aria-controls="queueFilters" aria-expanded="false">Filtros</button><button id="refreshConversations" class="icon-button" type="button" aria-label="Actualizar conversaciones">Actualizar</button></div>
+            <div class="title-tools"><span id="syncStatus" class="sync-status" data-state="updated" aria-live="polite">Actualizado</span><button id="filtersToggle" class="icon-button" type="button" aria-controls="queueFilters" aria-expanded="false">Filtros</button><button id="refreshConversations" class="icon-button" type="button" aria-label="Actualizar conversaciones">Actualizar</button></div>
           </div>
           <div id="companyPicker"></div>
           <form id="conversationSearchForm" class="search-form" role="search">
@@ -249,6 +256,7 @@
             <button id="conversationSearchSubmit" class="icon-button" type="submit">Buscar</button><button id="conversationSearchClear" class="icon-button" type="button">Limpiar</button>
           </form>
           <div id="queueCounters" class="queue-counters" aria-label="Contadores de cola"></div>
+          <div class="filter-summary-row"><span id="activeFiltersSummary" class="active-filters-summary" aria-live="polite">Sin filtros activos</span><button id="clearConversationFilters" class="icon-button clear-filters" type="button" hidden>Limpiar filtros</button></div>
           <div id="queueFilters" class="queue-filters" aria-labelledby="filtersHeading" data-open="false">
             <h2 id="filtersHeading" class="sr-only">Filtros de conversaciones</h2>
             <div class="quick-filters">
@@ -257,8 +265,11 @@
               <label class="transfer-toggle" for="unreadFilter"><input id="unreadFilter" type="checkbox"> Sólo no leídas</label>
             </div>
             <div class="filter-row">
+              <label class="filter-field" for="sortFilter">Orden<select id="sortFilter"><option value="desc">Más recientes primero</option><option value="asc">Más antiguas primero</option></select></label>
               <label class="filter-field" for="dateFilter">Fecha<select id="dateFilter"><option value="all">Todas</option><option value="today">Hoy</option><option value="yesterday">Ayer</option><option value="last7">Últimos 7 días</option><option value="month">Este mes</option></select></label>
-              <label class="transfer-toggle" for="transferFilter"><input id="transferFilter" type="checkbox" value="transferencia"> Ver clientes con transferencia</label>
+              <label class="filter-field" for="directionFilter">Dirección del último mensaje<select id="directionFilter"><option value="">Todos</option><option value="inbound">Entrantes</option><option value="outbound">Salientes</option></select></label>
+              <label class="filter-field" for="messageTypeFilter">Tipo del último mensaje<select id="messageTypeFilter"><option value="">Todos</option><option value="text">Texto</option><option value="image">Imagen</option><option value="document">Documento</option><option value="audio">Audio</option><option value="video">Video</option></select></label>
+              <label class="filter-field" for="paymentFilter">Medio de pago<select id="paymentFilter"><option value="">Todos</option><option value="transferencia">Transferencia</option><option value="efectivo">Efectivo</option></select></label>
             </div>
           </div>
         </header>
