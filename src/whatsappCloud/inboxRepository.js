@@ -325,7 +325,8 @@ export async function listCloudConversations({
   const paymentCondition = paymentFilter == null
     ? `AND ${paymentParameter}::text IS NULL`
     : `AND (
-            SELECT payment.payment_method
+            SELECT CASE WHEN payment.payment_method IN ('efectivo', 'transferencia')
+                        THEN payment.payment_method END
               FROM public.puntos_entrega AS point
               JOIN LATERAL (
                 SELECT LOWER(NULLIF(BTRIM(order_row.metodo_pago), '')) AS payment_method,
@@ -333,7 +334,6 @@ export async function listCloudConversations({
                   FROM public.pedidos AS order_row
                  WHERE order_row.empresa_id = point.empresa_id
                    AND order_row.punto_entrega_id = point.id
-                   AND LOWER(NULLIF(BTRIM(order_row.metodo_pago), '')) IN ('efectivo', 'transferencia')
                  ORDER BY order_row.fecha DESC NULLS LAST, order_row.id DESC
                  LIMIT 1
               ) AS payment ON TRUE
@@ -484,13 +484,13 @@ export async function listCloudConversations({
                   NULLIF(BTRIM(COALESCE(pe.direccion_completa,
                     NULLIF(CONCAT_WS(', ', NULLIF(pe.direccion, ''), NULLIF(pe.ciudad, '')), '')
                   )), '') AS delivery_address,
-                  payment.payment_method
+                  CASE WHEN payment.payment_method IN ('efectivo', 'transferencia')
+                       THEN payment.payment_method END AS payment_method
              FROM public.puntos_entrega pe
              LEFT JOIN LATERAL (
                SELECT LOWER(NULLIF(BTRIM(p.metodo_pago), '')) AS payment_method, p.fecha, p.id
                  FROM public.pedidos p
                 WHERE p.empresa_id = pe.empresa_id AND p.punto_entrega_id = pe.id
-                  AND LOWER(NULLIF(BTRIM(p.metodo_pago), '')) IN ('efectivo', 'transferencia')
                 ORDER BY p.fecha DESC NULLS LAST, p.id DESC LIMIT 1
              ) payment ON TRUE
             WHERE pe.empresa_id = $1

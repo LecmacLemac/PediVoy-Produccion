@@ -188,6 +188,10 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       SELECT id::text FROM whatsapp_cloud_conversations
        WHERE empresa_id=1 AND participant_wa_id='5493515550001'
     `)).rows[0];
+    const tenantOneSecondConversation = (await pool.query(`
+      SELECT id::text FROM whatsapp_cloud_conversations
+       WHERE empresa_id=1 AND participant_wa_id='5493515550002'
+    `)).rows[0];
     const tenantTwoConversation = (await pool.query(`
       SELECT id::text FROM whatsapp_cloud_conversations
        WHERE empresa_id=2 AND participant_wa_id='5493515550001'
@@ -210,10 +214,11 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       assert.equal(firstPageResponse.status, 200);
       const firstPage = await firstPageResponse.json();
       assert.equal(firstPage.conversations.length, 1);
-      assert.equal(firstPage.conversations[0].participant, '*********0002');
-      assert.equal(firstPage.conversations[0].customerName, 'Nombre Dos');
-      assert.equal(firstPage.conversations[0].customerAddress, 'Belgrano 456, Córdoba');
-      assert.equal(firstPage.conversations[0].paymentMethod, 'efectivo');
+      assert.equal(firstPage.conversations[0].conversationId, tenantOneConversation.id);
+      assert.equal(firstPage.conversations[0].participant, '*********0001');
+      assert.equal(firstPage.conversations[0].customerName, 'Cliente Uno');
+      assert.equal(firstPage.conversations[0].customerAddress, 'San Martín 123, Córdoba');
+      assert.equal(firstPage.conversations[0].paymentMethod, 'transferencia');
       assert.equal(typeof firstPage.nextCursor, 'string');
       assert.doesNotMatch(JSON.stringify(firstPage), /5493515550001|tenant one|tenant two|factura|No visible/i);
 
@@ -221,11 +226,11 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       assert.equal(secondPageResponse.status, 200);
       const secondPage = await secondPageResponse.json();
       assert.equal(secondPage.conversations.length, 1);
-      assert.equal(secondPage.conversations[0].conversationId, tenantOneConversation.id);
-      assert.equal(secondPage.conversations[0].participant, '*********0001');
-      assert.equal(secondPage.conversations[0].customerName, 'Cliente Uno');
-      assert.equal(secondPage.conversations[0].customerAddress, 'San Martín 123, Córdoba');
-      assert.equal(secondPage.conversations[0].paymentMethod, 'transferencia');
+      assert.equal(secondPage.conversations[0].conversationId, tenantOneSecondConversation.id);
+      assert.equal(secondPage.conversations[0].participant, '*********0002');
+      assert.equal(secondPage.conversations[0].customerName, 'Nombre Dos');
+      assert.equal(secondPage.conversations[0].customerAddress, 'Belgrano 456, Córdoba');
+      assert.equal(secondPage.conversations[0].paymentMethod, 'efectivo');
       assert.equal(secondPage.nextCursor, null);
 
       const historyResponse = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneConversation.id}/messages?limit=1`);
@@ -305,6 +310,72 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       reply_correlation_id: 'admin:pg-reply-1',
       status: 'pending',
     }]);
+  });
+});
+
+test('último pedido real define medio de pago antes de allowlist y filtros', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id, config_integraciones) VALUES (1,$1::jsonb),(2,$2::jsonb)', [
+      cloudConfig('phone-payment-one'), cloudConfig('phone-payment-two'),
+    ]);
+    await pool.query("INSERT INTO usuarios(id,username,password,role,empresa_id) VALUES (1,'admin-payment','x','admin',1)");
+    const points = (await pool.query(`
+      INSERT INTO puntos_entrega
+        (empresa_id,cliente,nombre,direccion,ciudad,telefono,telefono_normalizado)
+      VALUES
+        (1,'Último otro','Último otro','Ruta 1','Córdoba','3515551001','5493515551001'),
+        (1,'Último null','Último null','Ruta 2','Córdoba','3515551002','5493515551002'),
+        (2,'Tenant ajeno','Tenant ajeno','Oculta','Córdoba','3515551001','5493515551001')
+      RETURNING id,empresa_id,telefono_normalizado
+    `)).rows;
+    const otherPoint = points.find(row => row.empresa_id === 1 && row.telefono_normalizado.endsWith('1001'));
+    const nullPoint = points.find(row => row.empresa_id === 1 && row.telefono_normalizado.endsWith('1002'));
+    const foreignPoint = points.find(row => row.empresa_id === 2);
+    await pool.query(`
+      INSERT INTO pedidos (id,empresa_id,punto_entrega_id,metodo_pago,fecha)
+      VALUES
+        (9101,1,$1,'transferencia','2026-10-06T09:00:00Z'),
+        (9102,1,$1,'tarjeta','2026-10-07T09:00:00Z'),
+        (9201,1,$2,'transferencia','2026-10-06T09:00:00Z'),
+        (9202,1,$2,NULL,'2026-10-07T09:00:00Z'),
+        (9301,2,$3,'efectivo','2026-10-08T09:00:00Z')
+    `, [otherPoint.id, nullPoint.id, foreignPoint.id]);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_messages
+        (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at)
+      VALUES
+        (1,'inbound','5493515551001','text','otro más nuevo','received',0,'2026-10-07T12:00:00Z','2026-10-07T12:00:00Z','2026-10-07T12:00:00Z'),
+        (1,'inbound','5493515551002','text','null más nuevo','received',0,'2026-10-07T11:00:00Z','2026-10-07T11:00:00Z','2026-10-07T11:00:00Z')
+    `);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_conversations (empresa_id,participant_wa_id,created_at,updated_at)
+      SELECT empresa_id,participant_wa_id,MIN(created_at),MAX(updated_at)
+        FROM whatsapp_cloud_messages GROUP BY empresa_id,participant_wa_id
+    `);
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+      canonicalOrigin: 'https://admin.pedivoy.test',
+      withAuth(req, _res, next) { req.user = { uid: 1, role: 'admin', empresa_id: 1 }; next(); },
+      query: async (sql, params) => (await pool.query(sql, params)).rows,
+      pool,
+    }));
+
+    await withServer(app, async baseUrl => {
+      const unfiltered = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations`);
+      assert.equal(unfiltered.status, 200);
+      const body = await unfiltered.json();
+      assert.deepEqual(body.conversations.map(row => [row.participant, row.paymentMethod]), [
+        ['*********1001', null],
+        ['*********1002', null],
+      ]);
+      for (const payment of ['transferencia', 'efectivo']) {
+        const filtered = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations?payment=${payment}`);
+        assert.equal(filtered.status, 200, payment);
+        assert.deepEqual((await filtered.json()).conversations, [], payment);
+      }
+    });
   });
 });
 
@@ -678,7 +749,7 @@ test('Task 4 busca fuera de la primera página y resuelve context exact, ambiguo
   });
 });
 
-test('Task 4 pagina más de 500 coincidencias y prioriza urgent fuera del orden telefónico', async () => {
+test('Task 4 pagina más de 500 coincidencias por actividad desc sin priorizar urgent', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id, config_integraciones) VALUES (1,$1::jsonb)', [cloudConfig('phone-many')]);
     await pool.query("INSERT INTO usuarios(id,username,password,role,empresa_id) VALUES (1,'admin-many','x','admin',1)");
@@ -693,6 +764,7 @@ test('Task 4 pagina más de 500 coincidencias y prioriza urgent fuera del orden 
       SELECT empresa_id,participant_wa_id,MIN(created_at),MAX(updated_at) FROM whatsapp_cloud_messages GROUP BY empresa_id,participant_wa_id`);
     await pool.query("UPDATE whatsapp_cloud_conversations SET priority='urgent' WHERE participant_wa_id='5493510000505'");
     const urgent = (await pool.query("SELECT id::text FROM whatsapp_cloud_conversations WHERE participant_wa_id='5493510000505'")).rows[0].id;
+    const newest = (await pool.query("SELECT id::text FROM whatsapp_cloud_conversations WHERE participant_wa_id='5493510000001'")).rows[0].id;
     const app = express();
     app.use(express.json());
     app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
@@ -715,7 +787,8 @@ test('Task 4 pagina más de 500 coincidencias y prioriza urgent fuera del orden 
       } while (cursor);
       assert.equal(ids.length, 505);
       assert.equal(new Set(ids).size, 505);
-      assert.equal(ids[0], urgent);
+      assert.equal(ids[0], newest);
+      assert.equal(ids.at(-1), urgent);
     });
   });
 });

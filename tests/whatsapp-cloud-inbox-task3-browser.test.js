@@ -283,14 +283,17 @@ browserTest('Task 3 aplica filtros workflow, priority y unread sin mezclar respu
     await page.waitForSelector(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
     await delay(230);
     assert.deepEqual((await cardSnapshot(page)).map(card => card.id), [ids.urgent]);
-    assert.deepEqual(requests.lists[1].params, { limit: '25', workflowStatus: 'pending' });
-    assert.deepEqual(requests.lists[2].params, { limit: '25', workflowStatus: 'pending', priority: 'urgent' });
+    assert.deepEqual(requests.lists[1].params, { limit: '25', sort: 'desc', workflowStatus: 'pending' });
+    assert.deepEqual(requests.lists[2].params, { limit: '25', sort: 'desc', workflowStatus: 'pending', priority: 'urgent' });
 
+    await page.click('#filtersToggle');
+    await page.waitForFunction(() => document.querySelector('#filtersToggle')?.getAttribute('aria-expanded') === 'true');
+    assert.equal(await page.$eval('#queueFilters', element => element.dataset.open), 'true');
     await page.click('#unreadFilter');
     await waitFor(() => requests.lists.length === 4, 'GET unread true');
     await page.waitForFunction(id => document.querySelector('.conversation-card')?.dataset.conversationId === id, {}, ids.urgent);
     assert.deepEqual(requests.lists[3].params, {
-      limit: '25', workflowStatus: 'pending', priority: 'urgent', unread: 'true',
+      limit: '25', sort: 'desc', workflowStatus: 'pending', priority: 'urgent', unread: 'true',
     });
     assert.match((await cardSnapshot(page))[0].text, /5 sin leer/);
     assert.equal(await page.$eval('#workflowFilter', element => element.value), 'pending');
@@ -329,8 +332,8 @@ browserTest('Task 3 invalida contexto de filtros antes de aplicar GET previo y m
     releaseA();
     await waitFor(() => requests.lists.length === 3, 'GET B coalescido');
     assert.equal(requests.maxListInFlight, 1);
-    assert.deepEqual(requests.lists[1].params, { limit: '25' });
-    assert.deepEqual(requests.lists[2].params, { limit: '25', priority: 'urgent' });
+    assert.deepEqual(requests.lists[1].params, { limit: '25', sort: 'desc' });
+    assert.deepEqual(requests.lists[2].params, { limit: '25', sort: 'desc', priority: 'urgent' });
     assert.deepEqual(await cardSnapshot(page), [], 'A no debe renderizar tarjetas durante la ventana stale');
     assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), [], 'A no debe renderizar contadores stale');
     assert.equal(await page.$eval('#conversationWorkflow', element => element.disabled), true);
@@ -563,6 +566,9 @@ browserTest('Task 3 mutaciones aplican filtros activos y conservan chat y borrad
     stateResponse: async ({ body }) => ({ body: { conversationId: ids.normal, workflowStatus: body.workflowStatus || 'pending', priority: body.priority || 'normal', version: 5 } }),
   }, async ({ page, requests }) => {
     await page.waitForSelector('.conversation-card');
+    await page.click('#filtersToggle');
+    await page.waitForFunction(() => document.querySelector('#filtersToggle')?.getAttribute('aria-expanded') === 'true');
+    assert.equal(await page.$eval('#queueFilters', element => element.dataset.open), 'true');
     await page.click('#unreadFilter');
     await waitFor(() => requests.lists.length === 2, 'filtro unread activo');
     await page.waitForSelector('.conversation-card');
