@@ -224,6 +224,22 @@ function conversationOrderTuple(conversation) {
   ];
 }
 
+function compareConversations(left, right, sort = 'desc') {
+  const hasLeftActivity = /^-?[0-9]+$/.test(String(left?.lastMessageActivityKey ?? ''))
+    || Number.isFinite(Date.parse(left?.lastMessageAt || ''));
+  const hasRightActivity = /^-?[0-9]+$/.test(String(right?.lastMessageActivityKey ?? ''))
+    || Number.isFinite(Date.parse(right?.lastMessageAt || ''));
+  if (!hasLeftActivity && !hasRightActivity) return 0;
+  const a = conversationOrderTuple(left);
+  const b = conversationOrderTuple(right);
+  const direction = sort === 'asc' ? 1 : -1;
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] < b[index]) return -1 * direction;
+    if (a[index] > b[index]) return direction;
+  }
+  return 0;
+}
+
 function conversationMatchesFilters(conversation, filters = {}) {
   if (filters.workflowStatus && conversation.workflowStatus !== filters.workflowStatus) return false;
   if (filters.priority && conversation.priority !== filters.priority) return false;
@@ -254,34 +270,32 @@ export function mergeCanonicalConversationRefresh({
   sort = 'desc',
 } = {}) {
   const removed = new Set(authoritativeRemovedIds.map(String));
-  const byId = new Map();
-  for (const item of current) {
-    const id = String(item?.conversationId || '');
-    if (id && !removed.has(id)) byId.set(id, allowlistedConversation(item));
-  }
+  const previousFirst = new Set(previousFirstPageIds.map(String));
   const firstPageIds = [];
+  const firstPage = [];
   for (const item of incomingFirstPage) {
     const clean = allowlistedConversation(item);
     const id = String(clean.conversationId || '');
     if (!id || firstPageIds.includes(id)) continue;
     firstPageIds.push(id);
-    byId.set(id, clean);
+    firstPage.push(clean);
   }
-  const conversations = [...byId.values()].sort((left, right) => {
-    const a = conversationOrderTuple(left);
-    const b = conversationOrderTuple(right);
-    const direction = sort === 'asc' ? 1 : -1;
-    for (let index = 0; index < a.length; index += 1) {
-      if (a[index] < b[index]) return -1 * direction;
-      if (a[index] > b[index]) return direction;
-    }
-    return 0;
-  });
+  const incomingIds = new Set(firstPageIds);
+  const tailById = new Map();
+  for (const item of current) {
+    const id = String(item?.conversationId || '');
+    if (!id || removed.has(id) || incomingIds.has(id) || (previousFirst.size && previousFirst.has(id))) continue;
+    tailById.set(id, allowlistedConversation(item));
+  }
+  const tail = [...tailById.values()].sort((left, right) => compareConversations(left, right, sort));
+  const conversations = previousFirst.size
+    ? [...firstPage, ...tail]
+    : [...firstPage, ...tail].sort((left, right) => compareConversations(left, right, sort));
   return { conversations, firstPageIds, previousFirstPageIds: previousFirstPageIds.map(String) };
 }
 
 export function reconcileSearchConversationRefresh({
-  searchResults = [], canonical = [], authoritativeRemovedIds = [],
+  searchResults = [], canonical = [], authoritativeRemovedIds = [], sort = 'desc',
 } = {}) {
   const removed = new Set(authoritativeRemovedIds.map(String));
   const canonicalById = new Map(canonical.map(item => [String(item?.conversationId || ''), item]));
@@ -290,7 +304,7 @@ export function reconcileSearchConversationRefresh({
     if (!id || removed.has(id)) return [];
     const refreshed = canonicalById.get(id);
     return [{ ...(refreshed || item), searchStale: !refreshed }];
-  });
+  }).sort((left, right) => compareConversations(left, right, sort));
 }
 
 export function captureVisibleScrollAnchor(container) {

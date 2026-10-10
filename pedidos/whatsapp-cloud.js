@@ -1099,6 +1099,7 @@ async function autoRefreshConversations(signal) {
       searchResults: state.conversations,
       canonical: Array.isArray(payload.conversations) ? payload.conversations : [],
       authoritativeRemovedIds: Array.isArray(payload.authoritativeRemovedIds) ? payload.authoritativeRemovedIds : [],
+      sort: filters.sort,
     });
   }
   if (payload.counters && typeof payload.counters === 'object') state.counters = payload.counters;
@@ -1579,6 +1580,16 @@ function syncResponsiveChrome() {
     elements.contextToggle.setAttribute('aria-expanded', String(expanded));
   } else {
     elements.inbox.classList.remove('context-collapsed');
+    if (!activeOverlay && elements.queueFilters.dataset.open === 'true') {
+      const restoreFiltersFocus = elements.queueFilters.contains(document.activeElement);
+      elements.queueFilters.dataset.open = 'false';
+      elements.filtersToggle.setAttribute('aria-expanded', 'false');
+      clearDialogSemantics(elements.queueFilters);
+      clearOverlayInert();
+      elements.inbox.dataset.overlayOpen = 'false';
+      elements.overlayBackdrop.setAttribute('aria-hidden', 'true');
+      if (restoreFiltersFocus) elements.filtersToggle.focus({ preventScroll: true });
+    }
     if (activeOverlay !== 'context') elements.contextPanel.dataset.open = 'false';
     elements.contextToggle.setAttribute('aria-expanded', String(activeOverlay === 'context'));
   }

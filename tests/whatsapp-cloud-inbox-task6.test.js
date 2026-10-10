@@ -109,6 +109,31 @@ test('Task 6 merge canónico retira sólo bajas autoritativas y preserva página
   assert.equal(result.conversations.find(item => item.conversationId === 'b').unreadCount, 2);
 });
 
+test('Task 6 refresh reemplaza membresía de primera página sin retener desplazadas en asc ni desc', () => {
+  const conversation = (conversationId, activity) => ({
+    conversationId,
+    participant: `*********${conversationId}`,
+    lastMessageActivityKey: String(activity),
+    lastMessageId: String(activity),
+    lastMessageAt: `2026-10-08T10:${String(activity).padStart(2, '0')}:00Z`,
+  });
+  const descending = mergeCanonicalConversationRefresh({
+    current: [conversation('a', 40), conversation('b', 30), conversation('c', 20), conversation('d', 10)],
+    incomingFirstPage: [conversation('x', 50), conversation('a', 40)],
+    previousFirstPageIds: ['a', 'b'],
+    sort: 'desc',
+  });
+  assert.deepEqual(descending.conversations.map(item => item.conversationId), ['x', 'a', 'c', 'd']);
+
+  const ascending = mergeCanonicalConversationRefresh({
+    current: [conversation('a', 10), conversation('b', 20), conversation('c', 30), conversation('d', 40), conversation('e', 50)],
+    incomingFirstPage: [conversation('c', 30), conversation('d', 40)],
+    previousFirstPageIds: ['a', 'b'],
+    sort: 'asc',
+  });
+  assert.deepEqual(ascending.conversations.map(item => item.conversationId), ['c', 'd', 'e']);
+});
+
 test('Task 6 search activo usa canónico coincidente, marca ausentes stale y quita filtros incumplidos', () => {
   const result = reconcileSearchConversationRefresh({
     searchResults: [
@@ -123,6 +148,18 @@ test('Task 6 search activo usa canónico coincidente, marca ausentes stale y qui
   assert.deepEqual(result[0], {
     conversationId: 'a', unreadCount: 0, priority: 'urgent', workflowStatus: 'resolved', version: 4, searchStale: false,
   });
+});
+
+test('Task 6 search activo se reordena con el sort vigente después del refresh', () => {
+  const searchResults = [
+    { conversationId: 'a', lastMessageActivityKey: '10', lastMessageId: '10' },
+    { conversationId: 'b', lastMessageActivityKey: '20', lastMessageId: '20' },
+  ];
+  const canonical = [{ conversationId: 'a', lastMessageActivityKey: '30', lastMessageId: '30' }];
+  const descending = reconcileSearchConversationRefresh({ searchResults, canonical, sort: 'desc' });
+  const ascending = reconcileSearchConversationRefresh({ searchResults, canonical, sort: 'asc' });
+  assert.deepEqual(descending.map(item => item.conversationId), ['a', 'b']);
+  assert.deepEqual(ascending.map(item => item.conversationId), ['b', 'a']);
 });
 
 test('Task 6 merge history deduplica correlaciones y nunca retrocede estados', () => {

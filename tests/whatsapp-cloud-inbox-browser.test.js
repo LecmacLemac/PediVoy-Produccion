@@ -760,7 +760,7 @@ test('Task 6 browser super revocado borra selector, tenant y toda metadata sensi
   );
 });
 
-test('Task 6 browser mergea lista e historial reales sin perder páginas, activo, borradores ni cursores', { skip: !existsSync(chromePath) }, async () => {
+test('Task 6 browser mergea lista e historial preservando páginas adicionales, activo, borradores y cursores', { skip: !existsSync(chromePath) }, async () => {
   const liveListSeen = deferred();
   const liveHistorySeen = deferred();
   await withBrowserPage(
@@ -797,7 +797,7 @@ test('Task 6 browser mergea lista e historial reales sin perder páginas, activo
         firstStatus: [...document.querySelectorAll('#messageHistory .message')]
           .find(item => item.dataset.messageId === '1')?.querySelector('.status-badge')?.textContent,
       }));
-      assert.deepEqual(state.ids.sort(), ['40', '44', '45', '46']);
+      assert.deepEqual(state.ids.sort(), ['40', '44', '46']);
       assert.equal(new Set(state.ids).size, state.ids.length);
       assert.equal(state.active, '40');
       assert.equal(state.draft, 'borrador intacto');
@@ -855,6 +855,8 @@ test('Task 6 browser reconcilia búsqueda activa sin POST automático y clear co
   await withBrowserPage(
     { width: 1280, height: 800, deviceScaleFactor: 1 },
     async ({ page, counts }) => {
+      await page.select('#sortFilter', 'asc');
+      await page.waitForFunction(() => document.querySelectorAll('.conversation-card').length === 2);
       await page.type('#conversationSearch', 'cliente');
       await page.click('#conversationSearchSubmit');
       await page.waitForFunction(() => document.querySelectorAll('.conversation-card').length === 3);
@@ -866,9 +868,10 @@ test('Task 6 browser reconcilia búsqueda activa sin POST automático y clear co
       await refreshed.promise;
       await page.waitForFunction(id => !document.querySelector(`.conversation-card[data-conversation-id="${id}"]`), {}, c);
       assert.deepEqual(await page.evaluate(ids => ({
+        order: [...document.querySelectorAll('.conversation-card')].map(item => item.dataset.conversationId),
         aPriority: document.querySelector(`.conversation-card[data-conversation-id="${ids.a}"]`)?.textContent.includes('Prioridad urgent'),
         bStale: document.querySelector(`.conversation-card[data-conversation-id="${ids.b}"]`)?.dataset.searchStale,
-      }), { a, b }), { aPriority: true, bStale: 'true' });
+      }), { a, b }), { order: [b, a], aPriority: true, bStale: 'true' });
       assert.equal(counts.apiRequests.filter(entry => entry.path.endsWith('/search')).length, searchPostsBefore);
       await page.click('#conversationSearchClear');
       assert.equal(await page.evaluate(id => (
@@ -877,11 +880,11 @@ test('Task 6 browser reconcilia búsqueda activa sin POST automático y clear co
     },
     {
       refreshDelayMs: 10_000,
-      conversationsResponse: ({ index }) => {
-        if (index > 0) {
+      conversationsResponse: ({ index, url }) => {
+        if (url.searchParams.get('sort') === 'asc' && index > 1) {
           refreshed.resolve();
           return { conversations: [
-            { conversationId: a, participant: '*********0001', priority: 'urgent', workflowStatus: 'resolved', version: 4, unreadCount: 0, lastMessageAt: '2026-10-08T12:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'read', lastMessageId: '40' },
+            { conversationId: a, participant: '*********0001', priority: 'urgent', workflowStatus: 'resolved', version: 4, unreadCount: 0, lastMessageAt: '2026-10-08T12:30:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'read', lastMessageId: '40' },
           ], nextCursor: null, authoritativeRemovedIds: [c] };
         }
         return { conversations: [
@@ -890,12 +893,76 @@ test('Task 6 browser reconcilia búsqueda activa sin POST automático y clear co
         ], nextCursor: null };
       },
       searchResponse: () => ({ conversations: [
-        { conversationId: a, participant: '*********0001', priority: 'normal', workflowStatus: 'pending', version: 1, unreadCount: 1, lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '10' },
-        { conversationId: b, participant: '*********0002', priority: 'high', workflowStatus: 'pending', version: 1, unreadCount: 2, lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '9' },
-        { conversationId: c, participant: '*********0003', priority: 'normal', workflowStatus: 'pending', version: 1, unreadCount: 1, lastMessageAt: '2026-10-06T10:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '8' },
+        { conversationId: a, participant: '*********0001', priority: 'normal', workflowStatus: 'pending', version: 1, unreadCount: 1, lastMessageAt: '2026-10-06T10:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '10' },
+        { conversationId: b, participant: '*********0002', priority: 'high', workflowStatus: 'pending', version: 1, unreadCount: 2, lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '20' },
+        { conversationId: c, participant: '*********0003', priority: 'normal', workflowStatus: 'pending', version: 1, unreadCount: 1, lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '30' },
       ], nextCursor: null }),
     },
   );
+});
+
+test('Task 6 browser reemplaza primera página y preserva páginas cargadas en asc y desc', { skip: !existsSync(chromePath) }, async () => {
+  const ids = {
+    a: '10d1a4a8-8877-4dc6-a7a0-e81b87f8e2a1',
+    b: '20d1a4a8-8877-4dc6-a7a0-e81b87f8e2a2',
+    c: '30d1a4a8-8877-4dc6-a7a0-e81b87f8e2a3',
+    d: '40d1a4a8-8877-4dc6-a7a0-e81b87f8e2a4',
+    e: '50d1a4a8-8877-4dc6-a7a0-e81b87f8e2a5',
+    x: '60d1a4a8-8877-4dc6-a7a0-e81b87f8e2a6',
+  };
+  const item = (conversationId, minute) => ({
+    conversationId,
+    participant: `*********${minute}`,
+    lastMessageAt: `2026-10-08T10:${String(minute).padStart(2, '0')}:00Z`,
+    lastMessageActivityKey: String(minute),
+    lastMessageId: String(minute),
+    lastMessageType: 'text',
+    lastDirection: 'inbound',
+    lastDeliveryStatus: 'received',
+  });
+
+  for (const sort of ['desc', 'asc']) {
+    let firstPageLoads = 0;
+    const refreshed = deferred();
+    await withBrowserPage(
+      { width: 1280, height: 800, deviceScaleFactor: 1 },
+      async ({ page }) => {
+        if (sort === 'asc') {
+          await page.select('#sortFilter', 'asc');
+          await page.waitForFunction(id => document.querySelector(`.conversation-card[data-conversation-id="${id}"]`), {}, ids.a);
+        }
+        await clickCurrent(page, '#loadMoreConversations');
+        await page.waitForFunction(id => document.querySelector(`.conversation-card[data-conversation-id="${id}"]`), {}, ids.e);
+        await page.evaluate(() => {
+          Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+          document.dispatchEvent(new Event('visibilitychange'));
+        });
+        await refreshed.promise;
+        const expected = sort === 'desc' ? [ids.x, ids.a, ids.e, ids.d, ids.c] : [ids.c, ids.d, ids.e];
+        await page.waitForFunction(target => (
+          [...document.querySelectorAll('.conversation-card')].map(element => element.dataset.conversationId).join(',') === target.join(',')
+        ), {}, expected);
+      },
+      {
+        refreshDelayMs: 10_000,
+        conversationsResponse: ({ url }) => {
+          const requestSort = url.searchParams.get('sort') || 'desc';
+          if (requestSort !== sort && sort === 'asc') return { conversations: [item(ids.x, 60)], nextCursor: null };
+          if (url.searchParams.has('cursor')) return { conversations: [item(ids.c, 30), item(ids.d, 40), item(ids.e, 50)], nextCursor: null };
+          firstPageLoads += 1;
+          if (firstPageLoads > 1) {
+            refreshed.resolve();
+            return sort === 'desc'
+              ? { conversations: [item(ids.x, 60), item(ids.a, 50)], nextCursor: 'next' }
+              : { conversations: [item(ids.c, 30), item(ids.d, 40)], nextCursor: 'next' };
+          }
+          return sort === 'desc'
+            ? { conversations: [item(ids.a, 50), item(ids.b, 40)], nextCursor: 'next' }
+            : { conversations: [item(ids.a, 10), item(ids.b, 20)], nextCursor: 'next' };
+        },
+      },
+    );
+  }
 });
 
 test('Task 6 browser descarta GET demorados al cambiar tenant y conversación', { skip: !existsSync(chromePath) }, async () => {
@@ -1381,6 +1448,46 @@ test('Task 7 drawers son accesibles, cierran con Escape y restauran foco sin per
     assert.equal(await page.$eval('#contextToggle', button => button.getAttribute('aria-expanded')), 'false');
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'contextToggle');
     assert.equal(await page.$eval('#messageInput', input => input.value), 'borrador de respuesta');
+  });
+});
+
+test('Task 7 cierra filtros inline al cruzar de desktop a tablet o móvil', { skip: !existsSync(chromePath) }, async () => {
+  await withBrowserPage({ width: 1440, height: 900, deviceScaleFactor: 1 }, async ({ page }) => {
+    await clickCurrent(page, '#filtersToggle');
+    assert.deepEqual(await page.evaluate(() => ({
+      open: document.querySelector('#queueFilters').dataset.open,
+      expanded: document.querySelector('#filtersToggle').getAttribute('aria-expanded'),
+      role: document.querySelector('#queueFilters').getAttribute('role'),
+      active: document.activeElement?.id,
+    })), { open: 'true', expanded: 'true', role: null, active: 'workflowFilter' });
+
+    for (const width of [1024, 390]) {
+      await page.setViewport({ width, height: 800, deviceScaleFactor: 1 });
+      await page.waitForFunction(() => document.querySelector('#filtersToggle').getAttribute('aria-expanded') === 'false');
+      const state = await page.evaluate(() => ({
+        open: document.querySelector('#queueFilters').dataset.open,
+        expanded: document.querySelector('#filtersToggle').getAttribute('aria-expanded'),
+        role: document.querySelector('#queueFilters').getAttribute('role'),
+        modal: document.querySelector('#queueFilters').getAttribute('aria-modal'),
+        overlayOpen: document.querySelector('#inboxLayout').dataset.overlayOpen,
+        backdropHidden: document.querySelector('#overlayBackdrop').getAttribute('aria-hidden'),
+        inertCount: document.querySelectorAll('[data-overlay-inert="true"]').length,
+        active: document.activeElement?.id,
+      }));
+      assert.deepEqual(state, {
+        open: 'false', expanded: 'false', role: null, modal: null,
+        overlayOpen: 'false', backdropHidden: 'true', inertCount: 0, active: 'filtersToggle',
+      });
+    }
+
+    await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
+    await page.waitForFunction(() => innerWidth >= 1200);
+    assert.deepEqual(await page.evaluate(() => ({
+      open: document.querySelector('#queueFilters').dataset.open,
+      expanded: document.querySelector('#filtersToggle').getAttribute('aria-expanded'),
+      role: document.querySelector('#queueFilters').getAttribute('role'),
+      backdropHidden: document.querySelector('#overlayBackdrop').getAttribute('aria-hidden'),
+    })), { open: 'false', expanded: 'false', role: null, backdropHidden: 'true' });
   });
 });
 
