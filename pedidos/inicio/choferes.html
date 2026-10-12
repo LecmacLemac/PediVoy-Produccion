@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Choferes – MultiEmpresas</title>
   <link rel="stylesheet" href="theme-base.css" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-  
 <style>
   :root {
     /* Palette Dark Theme */
@@ -276,6 +274,8 @@
   .mini-btn { padding: 0.35rem 0.65rem; border-radius: 7px; font-size: 0.8rem; }
   .tracking-map-wrap { border:1px solid var(--border); border-radius:10px; overflow:hidden; background:#111827; }
   #trackingMap { width:100%; height:340px; }
+  #trackingMap .gm-style-iw, #trackingMap .gm-style-iw-d { color:#0f172a; }
+  #trackingMapError[hidden] { display:none !important; }
   .tracking-layout { display:grid; grid-template-columns: 1fr 320px; gap:1rem; align-items:stretch; }
   .tracking-incidents { border:1px solid var(--border); border-radius:10px; background:var(--bg-2); padding:0.8rem; display:flex; flex-direction:column; gap:0.6rem; min-height:340px; }
   .tracking-incidents h4 { margin:0; font-size:0.95rem; color:#fff; }
@@ -298,9 +298,6 @@
     .check-icon { position: static; transform: none; opacity: 1; } 
   }
 
-  /* Leaflet Dark Override */
-  .leaflet-bar { border: none !important; box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important; }
-  .leaflet-bar a { background-color: var(--bg-2) !important; color: #fff !important; border-bottom: 1px solid var(--border) !important; }
 
   .map-pin {
     width: 28px;
@@ -467,6 +464,7 @@
       <div class="tracking-layout">
         <div class="tracking-map-wrap">
           <div id="trackingMap"></div>
+          <small id="trackingMapError" role="alert" hidden style="color:var(--danger);padding:8px;display:block"></small>
         </div>
         <div class="tracking-incidents">
           <h4>🚨 Incidentes críticos</h4>
@@ -600,7 +598,7 @@
 
   <div id="toast" class="toast"></div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="/pedidos/inicio/choferes-google-map.js"></script>
   <script>
     // --- Utils ---
     const $ = s => document.querySelector(s);
@@ -831,15 +829,6 @@
       }).join('');
     }
 
-    function focusIncident(pedidoId) {
-      const m = trackingMarkerByPedido.get(String(pedidoId));
-      if (!m || !trackingMap) return;
-      try {
-        trackingMap.setView(m.getLatLng(), 16, { animate: true });
-        m.openPopup();
-      } catch {}
-    }
-
     async function ackIncident(pedidoId) {
       if (!pedidoId) return;
       const comment = (window.prompt('Comentario ACK (opcional):', '') || '').trim();
@@ -885,8 +874,11 @@
       if (newDriverBtn) newDriverBtn.style.display = activeView === 'fleet' ? '' : 'none';
 
       if (activeView === 'tracking') {
-        initTrackingMap();
-        setTimeout(() => trackingMap && trackingMap.invalidateSize(), 120);
+        initTrackingMap().then(ready => {
+          if (!ready) return;
+          resizeTrackingMap();
+          renderTrackingMap(getTrackingFilteredItems(), getDriverPresenceFilteredItems());
+        });
         loadTracking(true);
       }
     }
@@ -1182,115 +1174,6 @@
       trackingTimer = setInterval(() => loadTracking(false), 15000);
     }
 
-    function initTrackingMap() {
-      if (trackingMap || typeof L === 'undefined') return;
-      trackingMap = L.map('trackingMap', { zoomControl: true }).setView([-24.79, -65.41], 12);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; OpenStreetMap contributors'
-      }).addTo(trackingMap);
-      trackingMarkersLayer = L.layerGroup().addTo(trackingMap);
-      trackingTrailLayer = L.layerGroup().addTo(trackingMap);
-    }
-
-    function pushTrailPoint(pedidoId, lat, lng) {
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-      const k = String(pedidoId || '0');
-      const arr = trackingTrails.get(k) || [];
-      const last = arr[arr.length - 1];
-      if (!last || last[0] !== lat || last[1] !== lng) {
-        arr.push([lat, lng]);
-      }
-      if (arr.length > 15) arr.shift();
-      trackingTrails.set(k, arr);
-    }
-
-    function iconTruck() {
-      return L.divIcon({
-        className: 'map-icon',
-        html: '<div class="map-pin map-pin-truck" title="Repartidor">🚚</div>',
-        iconSize: [28, 28],
-        iconAnchor: [14, 14],
-        popupAnchor: [0, -12]
-      });
-    }
-
-    function iconHome() {
-      return L.divIcon({
-        className: 'map-icon',
-        html: '<div class="map-pin map-pin-home" title="Domicilio">🏠</div>',
-        iconSize: [28, 28],
-        iconAnchor: [14, 14],
-        popupAnchor: [0, -12]
-      });
-    }
-
-    function renderTrackingMap(items = [], presenceItems = []) {
-      if (!trackingMap || !trackingMarkersLayer || !trackingTrailLayer) return;
-      trackingMarkersLayer.clearLayers();
-      trackingTrailLayer.clearLayers();
-      trackingMarkerByPedido.clear();
-
-      const bounds = [];
-      items.forEach((it) => {
-        const lat = Number(it.latitud);
-        const lng = Number(it.longitud);
-        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-        if (lat === 0 && lng === 0) return;
-
-        const pedidoId = Number(it.pedido_id || 0);
-        pushTrailPoint(pedidoId, lat, lng);
-        const marker = L.marker([lat, lng], { icon: iconTruck() });
-
-        marker.bindPopup(`
-          <div style="min-width:190px">
-            <strong>Pedido #${pedidoId}</strong><br>
-            <small>${esc(it.chofer_nombre || 'Sin chofer')} · ${esc(it.estado || '-')}</small><br>
-            <small>Cliente: ${esc(it.cliente || '-')}</small><br>
-            <small>Última señal: ${esc(fmtAgo(it.timestamp))}</small>
-          </div>
-        `);
-        trackingMarkersLayer.addLayer(marker);
-        trackingMarkerByPedido.set(String(pedidoId), marker);
-
-        const trail = trackingTrails.get(String(pedidoId));
-        if (Array.isArray(trail) && trail.length > 1) {
-          const line = L.polyline(trail, { color: '#22d3ee', weight: 2, opacity: 0.6 });
-          trackingTrailLayer.addLayer(line);
-        }
-
-        bounds.push([lat, lng]);
-
-        const dLat = Number(it.dest_lat);
-        const dLng = Number(it.dest_lng);
-        if (Number.isFinite(dLat) && Number.isFinite(dLng)) {
-          const destMarker = L.marker([dLat, dLng], { icon: iconHome() });
-          trackingMarkersLayer.addLayer(destMarker);
-        }
-      });
-
-      const activeDriverBounds = (presenceItems || [])
-        .map(it => [Number(it.latitud), Number(it.longitud), it.timestamp])
-        .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]) && !(p[0] === 0 && p[1] === 0) && !isStale(p[2], 180))
-        .map(p => [p[0], p[1]]);
-
-      let selected = activeDriverBounds.length ? activeDriverBounds : bounds;
-
-      if (selected.length) {
-        const focusAlerts = !!$('#trackingFocusAlerts')?.checked;
-        if (focusAlerts) {
-          const alertBounds = items
-            .filter(it => buildAlert(it).text !== 'Normal')
-            .map(it => [Number(it.latitud), Number(it.longitud)])
-            .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
-          if (alertBounds.length) selected = alertBounds;
-        }
-
-        const b = L.latLngBounds(selected);
-        trackingMap.fitBounds(b.pad(0.2), { maxZoom: 15 });
-      }
-    }
-
     // --- Actions ---
     function openModal() {
       if (STATE.isSuper && !$('#empFilter').value) {
@@ -1528,7 +1411,7 @@
         const filtered = getTrackingFilteredItems(trackingLiveItems);
         const presenceFiltered = getDriverPresenceFilteredItems(driverPresenceItems);
         renderTracking(filtered);
-        renderTrackingMap(filtered, presenceFiltered);
+        renderTrackingMap(filtered, presenceFiltered, { refit: true });
         renderIncidents(filtered);
         renderDriverPresence(presenceFiltered);
       });
@@ -1539,7 +1422,7 @@
       trackingFocusAlerts.addEventListener('change', () => {
         const filtered = getTrackingFilteredItems(trackingLiveItems);
         const presenceFiltered = getDriverPresenceFilteredItems(driverPresenceItems);
-        renderTrackingMap(filtered, presenceFiltered);
+        renderTrackingMap(filtered, presenceFiltered, { refit: true });
       });
     }
 

@@ -24,6 +24,14 @@ export function createChoferesRouter(deps) {
     return next();
   }
 
+  router.get('/choferes/maps-config', withAuth, requireOperationalAdmin, (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const env = deps.mapsBrowserEnv || process.env;
+    const apiKey = String(env.GOOGLE_MAPS_BROWSER_API_KEY || '').trim();
+    if (!apiKey) return res.status(503).json({ error: 'Google Maps no está configurado. Configurá la clave de navegador.' });
+    return res.json({ apiKey, mapId: String(env.GOOGLE_MAPS_MAP_ID || '').trim() || 'DEMO_MAP_ID' });
+  });
+
   const CHOFERES_IMG_DIR = path.resolve(process.cwd(), 'pedidos', 'img', 'choferes');
   fs.mkdirSync(CHOFERES_IMG_DIR, { recursive: true });
 
