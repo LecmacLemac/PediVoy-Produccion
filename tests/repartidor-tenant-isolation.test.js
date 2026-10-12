@@ -171,9 +171,9 @@ test('PostgreSQL: stats no mezclan pedidos ni items de otro tenant aunque colisi
       CREATE TABLE chofer_escala_tramos (id integer PRIMARY KEY, escala_id integer, rango_min numeric, rango_max numeric, monto numeric);
       INSERT INTO puntos_entrega VALUES (11,1),(12,2);
       INSERT INTO pedidos VALUES
-        (1,1,7,'entregado',100,NOW(),NOW(),11),
-        (2,2,7,'entregado',900,NOW(),NOW(),11),
-        (3,1,7,'entregado',700,NOW(),NOW(),12);
+        (1,1,7,'entregado',100,CURRENT_DATE + TIME '12:00',CURRENT_DATE + TIME '12:00',11),
+        (2,2,7,'entregado',900,CURRENT_DATE + TIME '12:00',CURRENT_DATE + TIME '12:00',11),
+        (3,1,7,'entregado',700,CURRENT_DATE + TIME '12:00',CURRENT_DATE + TIME '12:00',12);
       INSERT INTO items_pedido VALUES (1,1,2,10),(2,2,9,10),(3,3,7,10);
       INSERT INTO chofer_escalas VALUES (1,1,7,CURRENT_DATE,NULL),(2,2,7,CURRENT_DATE,NULL);
       INSERT INTO chofer_escala_tramos VALUES (1,1,0,100,30),(2,2,0,100,999);
@@ -193,10 +193,13 @@ test('PostgreSQL: stats no mezclan pedidos ni items de otro tenant aunque colisi
       assert.equal(resumen.status, 200);
       assert.deepEqual(await resumen.json(), { entregados: '2', pendientes: '0', dinero: '800' });
 
-      const pago = await fetch(`${baseUrl}/api/repartidor/pago-dia?fecha=${new Date().toISOString().slice(0, 10)}`);
+      const [{ payment_date: paymentDate }] = (await pool.query(
+        'SELECT CURRENT_DATE::text AS payment_date'
+      )).rows;
+      const pago = await fetch(`${baseUrl}/api/repartidor/pago-dia?fecha=${paymentDate}`);
       assert.equal(pago.status, 200);
       assert.deepEqual(await pago.json(), {
-        fecha: new Date().toISOString().slice(0, 10),
+        fecha: paymentDate,
         cantidad: 2,
         pago: 30,
       });
