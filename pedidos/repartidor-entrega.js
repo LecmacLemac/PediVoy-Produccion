@@ -973,9 +973,10 @@ async function setStatus(id, st, el = null){
         const met = (pedido && pedido.metodo_pago ? String(pedido.metodo_pago) : '').toLowerCase();
 
         const esTransferencia = met === 'transferencia';
+        const transferenciaVerificada = verificadas.has(Number(id));
         const qrHabilitado = !!(pagosCanales && pagosCanales.qr_dinamico);
 
-        if (esTransferencia && qrHabilitado) {
+        if (esTransferencia && !transferenciaVerificada && qrHabilitado) {
           await abrirModalPagoQR(id);
           return;
         }
@@ -1041,6 +1042,10 @@ async function setPay(id, met, el = null) {
   }
 
   const pedido = pedidos.find(p => Number(p.id) === Number(id));
+  if (['cancelado', 'entregado'].includes(String(pedido?.estado || '').toLowerCase())) {
+    toast('No se puede cambiar la forma de pago de un pedido finalizado.');
+    return;
+  }
   if (metodo === 'cuenta_corriente' && pedido?.cuenta_corriente_habilitada !== true) {
     toast('Este cliente no está habilitado para Cta. Cte.');
     return;
@@ -1052,6 +1057,12 @@ async function setPay(id, met, el = null) {
     return;
   }
 
+  const cambiaSeleccionCliente = pedido?.metodo_pago_origen === 'cliente_whatsapp'
+    && String(pedido?.metodo_pago || '').toLowerCase() !== metodo;
+  if (cambiaSeleccionCliente && !confirm(
+    'El cliente eligió otra forma de pago por WhatsApp. ¿Confirmás que querés reemplazarla manualmente?'
+  )) return;
+
   const restoreBtn = setActionBusy(el, true);
 
   try {
@@ -1060,6 +1071,7 @@ async function setPay(id, met, el = null) {
       const zonaId = await resolverZonaParaPedido(id);
 
       const body = { metodo_pago: metodo };
+      if (cambiaSeleccionCliente) body.confirmar_cambio_cliente = true;
       if (zonaId != null) body.zona_id = zonaId;
 
       await api(`/api/repartidor/pedidos/${id}`, { method: 'PUT', body });

@@ -6971,3 +6971,64 @@ VALUES (TRUE)
 ON CONFLICT (id) DO NOTHING;
 
 COMMIT;
+
+-- BEGIN WHATSAPP PAYMENT CHOICE MIGRATION
+BEGIN;
+SET LOCAL search_path = public;
+SET LOCAL lock_timeout = '30s';
+SET LOCAL statement_timeout = '5min';
+
+ALTER TABLE public.pedidos
+  ADD COLUMN IF NOT EXISTS metodo_pago_origen TEXT,
+  ADD COLUMN IF NOT EXISTS metodo_pago_seleccionado_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS metodo_pago_outbound_message_id TEXT,
+  ADD COLUMN IF NOT EXISTS metodo_pago_inbound_message_id TEXT;
+
+CREATE TABLE IF NOT EXISTS public.pedido_metodo_pago_eventos (
+  id BIGSERIAL PRIMARY KEY,
+  empresa_id INTEGER NOT NULL REFERENCES public.empresas(id) ON DELETE CASCADE,
+  pedido_id INTEGER NOT NULL REFERENCES public.pedidos(id) ON DELETE CASCADE,
+  outbound_message_id TEXT,
+  inbound_message_id TEXT,
+  metodo_pago TEXT NOT NULL,
+  origen TEXT NOT NULL,
+  resultado TEXT NOT NULL,
+  actor_usuario_id INTEGER,
+  actor_chofer_id INTEGER,
+  notification_status TEXT NOT NULL DEFAULT 'not_required',
+  notification_outbox_id INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  CONSTRAINT pedido_metodo_pago_eventos_metodo_check
+    CHECK (metodo_pago IN ('efectivo', 'transferencia', 'cuenta_corriente')),
+  CONSTRAINT pedido_metodo_pago_eventos_origen_check
+    CHECK (origen IN ('cliente_whatsapp', 'repartidor_manual')),
+  CONSTRAINT pedido_metodo_pago_eventos_resultado_check
+    CHECK (resultado IN ('accepted', 'rejected_contradictory', 'manual_override')),
+  CONSTRAINT pedido_metodo_pago_eventos_notification_check
+    CHECK (notification_status IN ('not_required', 'queued', 'unavailable')),
+  CONSTRAINT pedido_metodo_pago_eventos_provider_shape_check CHECK (
+    (origen = 'cliente_whatsapp'
+      AND outbound_message_id IS NOT NULL
+      AND inbound_message_id IS NOT NULL
+      AND actor_usuario_id IS NULL
+      AND actor_chofer_id IS NULL)
+    OR
+    (origen = 'repartidor_manual'
+      AND outbound_message_id IS NULL
+      AND inbound_message_id IS NULL
+      AND actor_usuario_id IS NOT NULL
+      AND actor_chofer_id IS NOT NULL)
+  )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pedido_metodo_pago_eventos_inbound
+  ON public.pedido_metodo_pago_eventos (empresa_id, inbound_message_id)
+  WHERE inbound_message_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pedido_metodo_pago_eventos_first_click
+  ON public.pedido_metodo_pago_eventos (empresa_id, outbound_message_id)
+  WHERE resultado = 'accepted' AND outbound_message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_pedido_metodo_pago_eventos_pedido
+  ON public.pedido_metodo_pago_eventos (empresa_id, pedido_id, created_at DESC, id DESC);
+
+COMMIT;
+-- END WHATSAPP PAYMENT CHOICE MIGRATION

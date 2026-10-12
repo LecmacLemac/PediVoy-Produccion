@@ -5,6 +5,7 @@ import {
   enqueueWppOrderConfirmationNotification,
   enqueueWppOrderEnRouteNotification,
   enqueueWppTransferPaymentNotification,
+  enqueueWppTransferPaymentNotificationInTransaction,
   WppTransportConfigError,
 } from '../wpp/enqueue.js';
 import { buildProactiveNotificationCorrelationId } from '../wpp/proactiveCorrelation.js';
@@ -53,6 +54,15 @@ export function enqueueOrderEnRouteWppMessage(input, transactionPool = pool) {
 
 export function enqueueTransferPaymentWppMessage(input, transactionPool = pool) {
   return enqueueRequiredNotification(enqueueWppTransferPaymentNotification, 'transfer_payment', input, transactionPool);
+}
+
+export function enqueueTransferPaymentWppMessageInTransaction(input, transaction) {
+  return enqueueRequiredNotification(
+    (enqueueInput) => enqueueWppTransferPaymentNotificationInTransaction(enqueueInput, transaction),
+    'transfer_payment',
+    input,
+    null,
+  );
 }
 
 export async function enqueueCorrelatedWppMessage({

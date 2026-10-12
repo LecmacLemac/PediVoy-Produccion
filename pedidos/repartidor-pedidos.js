@@ -540,7 +540,25 @@ function renderCards() {
       ? stRaw
       : 'pendiente';
     const isVerif = verificadas.has(Number(p.id)) || p.validado;
-    const met = (p.metodo_pago || 'efectivo').toLowerCase();
+    const met = typeof p.metodo_pago === 'string' ? p.metodo_pago.toLowerCase() : '';
+    const paymentEditable = !['entregado', 'cancelado'].includes(st);
+    const paymentOrigin = String(p.metodo_pago_origen || '');
+    let paymentStatusText = 'Forma de pago pendiente';
+    if (met === 'efectivo') {
+      paymentStatusText = paymentOrigin === 'cliente_whatsapp'
+        ? 'Efectivo — elegido por el cliente'
+        : 'Efectivo — elegido por el repartidor';
+    } else if (met === 'transferencia') {
+      paymentStatusText = paymentOrigin === 'cliente_whatsapp'
+        ? 'Transferencia — elegida por el cliente'
+        : 'Transferencia — elegida por el repartidor';
+    } else if (met === 'cuenta_corriente') {
+      paymentStatusText = 'Cuenta corriente — elegida por el repartidor';
+    }
+    const paymentStatusHtml = `<div class="payment-choice-status ${met || 'pending'}" role="status">${esc(paymentStatusText)}</div>`;
+    const verifiedPaymentHtml = met === 'transferencia' && isVerif
+      ? '<span class="verified-badge">✓ Transferencia verificada</span>'
+      : '';
     
     // --- A. PROCESAR ÍTEMS CON PRECIOS ---
     let itemsHtml = '';
@@ -628,43 +646,43 @@ function renderCards() {
     const showCtaCte = ctaCteHabilitada && (!pagosCanales || pagosCanales.cuenta_corriente !== false);
 
     let payButtons = '';
+    const paymentDisabled = paymentEditable ? '' : ' disabled aria-disabled="true"';
     if (showEfec) {
       payButtons += `
-        <div 
+        <button type="button"
           class="pay-opt ${met === 'efectivo' ? 'active efectivo' : ''}"
-          onclick="setPay(${p.id}, 'efectivo', this)"
+          aria-pressed="${met === 'efectivo'}"
+          onclick="setPay(${p.id}, 'efectivo', this)"${paymentDisabled}
         >
           💵 Efectivo
-        </div>`;
+        </button>`;
     }
 
     if (showTrans) {
       payButtons += `
-        <div 
+        <button type="button"
           class="pay-opt ${met === 'transferencia' ? 'active transferencia' : ''}"
-          onclick="setPay(${p.id}, 'transferencia', this)"
+          aria-pressed="${met === 'transferencia'}"
+          onclick="setPay(${p.id}, 'transferencia', this)"${paymentDisabled}
         >
           📱 Transf.
-        </div>`;
+        </button>`;
     }
 
     if (showCtaCte) {
       payButtons += `
-        <div
+        <button type="button"
           class="pay-opt ${met === 'cuenta_corriente' ? 'active cuenta-corriente' : ''}"
-          onclick="setPay(${p.id}, 'cuenta_corriente', this)"
+          aria-pressed="${met === 'cuenta_corriente'}"
+          onclick="setPay(${p.id}, 'cuenta_corriente', this)"${paymentDisabled}
         >
           🧾 Cta. Cte.
-        </div>`;
-    }
-
-    if (isVerif) {
-      payButtons += `<span class="verified-badge">✓ Verificada</span>`;
+        </button>`;
     }
 
     const payRowHtml = payButtons
-      ? `<div class="pay-row">${payButtons}</div>`
-      : '';
+      ? `<div class="pay-row" aria-label="Forma de pago">${payButtons}${verifiedPaymentHtml}</div>`
+      : verifiedPaymentHtml;
     const fechaProgramada = p.fecha_entrega ? formatFechaAR(p.fecha_entrega) : '';
     const zonaPedido = p.zona_nombre || '';
     const agendaHtml = (fechaProgramada || zonaPedido)
@@ -694,6 +712,7 @@ function renderCards() {
           <span style="color:var(--muted); font-size:0.9rem; text-transform:uppercase; letter-spacing:0.5px;">Total a Cobrar</span>
           <span style="font-size:1.4rem; font-weight:bold; color:#fff; text-shadow:0 0 10px rgba(0,0,0,0.5)">${money(p.monto)}</span>
         </div>
+        ${paymentStatusHtml}
         ${payRowHtml}
         <div class="pc-actions">
           ${mapLink}

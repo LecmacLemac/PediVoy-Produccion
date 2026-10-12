@@ -14,6 +14,7 @@ import { createWhatsAppCloudGraphClient } from './graphClient.js';
 import { createWhatsAppCloudInboundConsumer } from './inboundConsumer.js';
 import { createWhatsAppCloudMediaClient } from './mediaClient.js';
 import { createWhatsAppCloudReceiptProcessor } from './receiptProcessor.js';
+import { createWhatsAppPaymentChoiceProcessor } from './paymentChoiceProcessor.js';
 import { createSchemaReadyConsumer } from './schemaReadyConsumer.js';
 import {
   claimNextCloudInboundEvent,
@@ -57,6 +58,7 @@ const receiptProcessor = createWhatsAppCloudReceiptProcessor({
   mediaClient: createWhatsAppCloudMediaClient(),
   enqueueReply: input => enqueueWppOutboxCorrelatedReply(input, pool),
 });
+const paymentChoiceProcessor = createWhatsAppPaymentChoiceProcessor({ pool });
 const inboundConsumer = createWhatsAppCloudInboundConsumer({
   owner,
   leaseMs: process.env.WHATSAPP_CLOUD_LEASE_MS,
@@ -67,6 +69,7 @@ const inboundConsumer = createWhatsAppCloudInboundConsumer({
   finish: options => finishCloudInboundEvent({ query: sensitiveQuery, ...options }),
   scheduleRetry: options => scheduleCloudInboundRetry({ query: sensitiveQuery, ...options }),
   processBotMessage: botAdapter.process,
+  processPaymentChoice: input => runWithSensitiveDbQueries(() => paymentChoiceProcessor(input)),
   prepareReceipt: input => runWithSensitiveDbQueries(() => receiptProcessor.prepare(input)),
   processReceipt: input => runWithSensitiveDbQueries(() => receiptProcessor.processPrepared(input)),
   logger: console,

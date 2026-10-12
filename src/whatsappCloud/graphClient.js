@@ -2,6 +2,16 @@ import { UTILITY_TEMPLATE_FIELDS, validateTemplateMapping, buildMetaTemplateComp
 import { normalizeCloudDeadline, unrefTimer } from './deadlines.js';
 import { validateMetaWamid } from './messageId.js';
 
+const PAYMENT_CHOICE_TEMPLATE_NAME = 'pedivoy_order_confirmation_v3';
+const PAYMENT_CHOICE_QUICK_REPLIES = Object.freeze([
+  Object.freeze({ type: 'button', sub_type: 'quick_reply', index: '0', parameters: Object.freeze([
+    Object.freeze({ type: 'payload', payload: 'pedivoy_payment_cash_v1' }),
+  ]) }),
+  Object.freeze({ type: 'button', sub_type: 'quick_reply', index: '1', parameters: Object.freeze([
+    Object.freeze({ type: 'payload', payload: 'pedivoy_payment_transfer_v1' }),
+  ]) }),
+]);
+
 export const CloudDeliveryOutcome = Object.freeze({
   SENT: 'sent',
   DEFINITIVE_FAILURE: 'definitive_failure',
@@ -137,6 +147,9 @@ export function createWhatsAppCloudGraphClient({
       if (values.some(value => !closed(value, ['type', 'text']) || value.type !== 'text')) throw new Error();
       const parameters = Object.fromEntries(UTILITY_TEMPLATE_FIELDS[key].map((field, i) => [field, values[i].text]));
       const components = buildMetaTemplateComponents({ key, parameters });
+      if (key === 'order_confirmation' && name === PAYMENT_CHOICE_TEMPLATE_NAME) {
+        components.push(...PAYMENT_CHOICE_QUICK_REPLIES);
+      }
       return postMessage(input, { type: 'template', template: { name, language: { code: language }, components } });
     } catch {
       return Promise.resolve({ outcome: CloudDeliveryOutcome.DEFINITIVE_FAILURE, errorCode: 'cloud_payload_invalid' });

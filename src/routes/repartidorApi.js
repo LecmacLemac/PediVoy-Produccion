@@ -428,7 +428,8 @@ export function createRepartidorApiRouter(deps) {
 	       `SELECT
 	          p.id, p.estado, p.fecha, p.fecha_entrega, p.fecha_entrega_estimada,
 	          p.punto_entrega_id,
-	          p.cantidad, p.monto, p.metodo_pago, p.chofer_id,
+	          p.cantidad, p.monto, p.metodo_pago, p.metodo_pago_origen,
+              p.metodo_pago_seleccionado_at, p.chofer_id,
 	          pe.cliente, pe.direccion, pe.ciudad, pe.telefono,
 	          COALESCE(pe.cuenta_corriente_habilitada, FALSE) AS cuenta_corriente_habilitada,
 	          pe.latitud, pe.longitud, pe.notas AS notas,
@@ -490,7 +491,8 @@ export function createRepartidorApiRouter(deps) {
 	        GROUP BY
 	          p.id, p.estado, p.fecha, p.fecha_entrega, p.fecha_entrega_estimada,
 	          p.punto_entrega_id,
-	          p.cantidad, p.monto, p.metodo_pago, p.chofer_id,
+	          p.cantidad, p.monto, p.metodo_pago, p.metodo_pago_origen,
+              p.metodo_pago_seleccionado_at, p.chofer_id,
 	          pe.cliente, pe.direccion, pe.ciudad, pe.telefono,
 	          pe.cuenta_corriente_habilitada,
 	          pe.latitud, pe.longitud, pe.notas,
@@ -888,7 +890,9 @@ export function createRepartidorApiRouter(deps) {
     const hasEstado = Object.hasOwn(body, 'estado');
     const hasMetodoPago = Object.hasOwn(body, 'metodo_pago');
     const hasZonaId = Object.hasOwn(body, 'zona_id');
-    const { estado, metodo_pago: metodoPago, zona_id: zonaIdBody } = body;
+    const hasCustomerOverrideConfirmation = Object.hasOwn(body, 'confirmar_cambio_cliente');
+    const { estado, metodo_pago: metodoPago, zona_id: zonaIdBody,
+      confirmar_cambio_cliente: customerOverrideConfirmed } = body;
     const estadosPermitidos = new Set(['pendiente', 'en_ruta', 'en_camino', 'cancelado']);
     const metodosPagoPermitidos = new Set(['efectivo', 'transferencia', 'cuenta_corriente']);
 
@@ -909,6 +913,12 @@ export function createRepartidorApiRouter(deps) {
     if (hasMetodoPago && (typeof metodoPago !== 'string' || !metodosPagoPermitidos.has(metodoPago))) {
       return res.status(400).json({ error: 'Método de pago inválido' });
     }
+    if (hasCustomerOverrideConfirmation && typeof customerOverrideConfirmed !== 'boolean') {
+      return res.status(400).json({ error: 'Confirmación de cambio inválida' });
+    }
+    if (hasCustomerOverrideConfirmation && !hasMetodoPago) {
+      return res.status(400).json({ error: 'La confirmación sólo aplica al método de pago' });
+    }
     if (hasZonaId && (!Number.isSafeInteger(zonaIdBody) || zonaIdBody <= 0)) {
       return res.status(400).json({ error: 'Zona inválida' });
     }
@@ -917,6 +927,8 @@ export function createRepartidorApiRouter(deps) {
     }
 
     const { chofer_id: choferId, empresa_id: empresaId } = req.user;
+    const actorIdCandidate = Number(req.user?.uid ?? req.user?.id);
+    const actorId = Number.isSafeInteger(actorIdCandidate) && actorIdCandidate > 0 ? actorIdCandidate : null;
     const transiciones = {
       pendiente: new Set(['pendiente', 'en_ruta', 'en_camino', 'cancelado']),
       en_ruta: new Set(['pendiente', 'en_ruta', 'en_camino', 'cancelado']),
@@ -926,7 +938,8 @@ export function createRepartidorApiRouter(deps) {
     try {
       await withTransaction(async txQuery => {
         const pedidos = await txQuery(
-          `SELECT p.id, p.chofer_id, p.estado, p.metodo_pago, p.zona_id, p.punto_entrega_id
+          `SELECT p.id, p.chofer_id, p.estado, p.metodo_pago, p.metodo_pago_origen,
+                  p.zona_id, p.punto_entrega_id
              FROM pedidos p
             WHERE p.id = $1
               AND p.empresa_id = $2
@@ -939,15 +952,24 @@ export function createRepartidorApiRouter(deps) {
         // El pedido se bloquea primero para mantener el orden ya usado por entrega;
         // el lock compartido del chofer mantiene activa la identidad hasta COMMIT.
         const choferes = await txQuery(
-          `SELECT id
-             FROM choferes
-            WHERE id = $1
-              AND empresa_id = $2
-              AND activo IS TRUE
-            FOR SHARE`,
-          [choferId, empresaId]
+          `SELECT c.id, u.id AS usuario_id
+             FROM choferes c
+             JOIN usuarios u
+               ON u.chofer_id = c.id
+              AND u.empresa_id = c.empresa_id
+              AND u.role = 'repartidor'
+              AND u.activo IS TRUE
+            WHERE c.id = $1
+              AND c.empresa_id = $2
+              AND c.activo IS TRUE
+              AND ($3::integer IS NULL OR u.id = $3)
+            ORDER BY u.id
+            LIMIT 2
+            FOR SHARE OF c, u`,
+          [choferId, empresaId, actorId]
         );
         if (choferes.length !== 1) throw deliveryHttpError(403, 'No autorizado');
+        const actorUsuarioId = Number(choferes[0].usuario_id);
 
         const pedido = pedidos[0];
         if (pedido.chofer_id != null && Number(pedido.chofer_id) !== choferId) {
@@ -964,6 +986,12 @@ export function createRepartidorApiRouter(deps) {
         }
         if (hasEstado && !transiciones[pedido.estado].has(estado)) {
           throw deliveryHttpError(409, 'Transición de estado no permitida');
+        }
+
+        const manualPaymentChange = hasMetodoPago && metodoPago !== pedido.metodo_pago;
+        if (manualPaymentChange && pedido.metodo_pago_origen === 'cliente_whatsapp'
+            && customerOverrideConfirmed !== true) {
+          throw deliveryHttpError(409, 'Confirmá el cambio de la forma de pago elegida por el cliente');
         }
 
         const metodoPagoFinal = hasMetodoPago ? metodoPago : pedido.metodo_pago;
@@ -1024,6 +1052,12 @@ export function createRepartidorApiRouter(deps) {
         if (hasMetodoPago) {
           values.push(metodoPago);
           sets.push(`metodo_pago = $${values.length}`);
+          if (manualPaymentChange) {
+            sets.push(`metodo_pago_origen = 'repartidor_manual'`);
+            sets.push('metodo_pago_seleccionado_at = pg_catalog.NOW()');
+            sets.push('metodo_pago_outbound_message_id = NULL');
+            sets.push('metodo_pago_inbound_message_id = NULL');
+          }
         }
         if (zonaIdFinal != null && (hasZonaId || pedido.zona_id == null)) {
           values.push(zonaIdFinal);
@@ -1060,6 +1094,17 @@ export function createRepartidorApiRouter(deps) {
         );
         if (actualizados.length !== 1) {
           throw deliveryHttpError(409, 'El pedido cambió durante la actualización');
+        }
+
+        if (manualPaymentChange) {
+          const auditRows = await txQuery(
+            `INSERT INTO pedido_metodo_pago_eventos
+              (empresa_id,pedido_id,metodo_pago,origen,resultado,actor_usuario_id,actor_chofer_id,notification_status)
+             VALUES ($1,$2,$3,'repartidor_manual','manual_override',$4,$5,'not_required')
+             RETURNING id`,
+            [empresaId, pedidoId, metodoPago, actorUsuarioId, choferId]
+          );
+          if (auditRows.length !== 1) throw deliveryHttpError(409, 'No se pudo auditar el cambio de pago');
         }
 
         if (actualizarZonaPuntoEntrega && pedido.punto_entrega_id != null) {

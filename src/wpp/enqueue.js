@@ -366,6 +366,37 @@ export function enqueueWppTransferPaymentNotification(input, transactionPool = d
   return enqueueRequiredUtilityNotification(input, transactionPool, 'transfer_payment');
 }
 
+async function enqueueRequiredUtilityNotificationInTransaction(input, { client, transactionOwner } = {}, requiredUtilityTemplateKey) {
+  if (transactionOwner !== 'caller' || !client || typeof client.query !== 'function'
+      || typeof client.release !== 'function') {
+    throw new WppTransportConfigError('transaction_client_requerido');
+  }
+  const notificationCorrelationId = input?.notificationCorrelationId;
+  const parsedCorrelation = parseProactiveNotificationCorrelationId(notificationCorrelationId);
+  if (!parsedCorrelation || parsedCorrelation.templateKey !== requiredUtilityTemplateKey) {
+    throw new WppTransportConfigError('notification_correlation_id_invalido');
+  }
+  const enqueueInput = input && typeof input === 'object' && !Array.isArray(input)
+    ? Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'notificationCorrelationId'))
+    : input;
+  const prepared = prepareEnqueue(enqueueInput, {
+    notificationCorrelationId: parsedCorrelation.canonical,
+    requireNotificationCorrelation: true,
+  });
+  if (prepared.skippedResult) return prepared.skippedResult;
+  prepared.requiredUtilityTemplateCapability = REQUIRED_UTILITY_TEMPLATE_CAPABILITY;
+  prepared.requiredUtilityTemplateKey = requiredUtilityTemplateKey;
+  try {
+    return await enqueuePreparedWithClient(prepared, client);
+  } catch (error) {
+    throw sanitizedEnqueueError(error);
+  }
+}
+
+export function enqueueWppTransferPaymentNotificationInTransaction(input, transaction) {
+  return enqueueRequiredUtilityNotificationInTransaction(input, transaction, 'transfer_payment');
+}
+
 export async function enqueueWppOutboxCorrelatedReply({
   empresaId = null,
   phone,

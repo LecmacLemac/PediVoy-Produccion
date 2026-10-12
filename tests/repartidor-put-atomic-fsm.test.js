@@ -23,7 +23,7 @@ function buildApp({ query = async () => [], withTransaction, user, effects = {} 
     query,
     withTransaction,
     withAuth(req, _res, next) {
-      req.user = user || { role: 'repartidor', empresa_id: 3, chofer_id: 7 };
+      req.user = user || { uid: 70, role: 'repartidor', empresa_id: 3, chofer_id: 7 };
       next();
     },
     getEmpresaIdFromToken: req => req.user?.empresa_id,
@@ -47,13 +47,14 @@ function mockTransactionForPedido(pedido, { zonaRows = [], puntoRows = [], updat
   return async work => work(async (sql, params = []) => {
     calls.push({ sql, params });
     if (sql.includes('FROM pedidos p')) return [pedido];
-    if (sql.includes('FROM choferes')) return [{ id: 7 }];
+    if (sql.includes('FROM choferes')) return [{ id: 7, usuario_id: 70 }];
     if (sql.includes('FROM zona_chofer')) return zonaRows;
     if (sql.includes('SELECT id, cuenta_corriente_habilitada')) return puntoRows;
     if (sql.includes('to_jsonb(pe)')) return [{ id: pedido.punto_entrega_id, empresa_id: 3 }];
     if (sql.includes('pg_advisory_xact_lock')) return [];
     if (sql.includes('id = ANY')) return [{ id: pedido.punto_entrega_id, empresa_id: 3 }];
     if (sql.includes('UPDATE pedidos')) return updateRows;
+    if (sql.includes('INSERT INTO pedido_metodo_pago_eventos')) return [{ id: 1 }];
     if (sql.includes('UPDATE puntos_entrega')) return [{ id: pedido.punto_entrega_id }];
     throw new Error(`SQL inesperado: ${sql}`);
   });
@@ -77,7 +78,7 @@ test('zona inválida revierte la toma implícita y no ejecuta efectos', async ()
       if (sql.includes('FROM pedidos p')) {
         return [{ ...pedidoBase, chofer_id: state.chofer_id, zona_id: null }];
       }
-      if (sql.includes('FROM choferes')) return [{ id: 7 }];
+      if (sql.includes('FROM choferes')) return [{ id: 7, usuario_id: 70 }];
       if (sql.includes('FROM zona_chofer')) return [];
       if (sql.includes('UPDATE pedidos')) {
         state.chofer_id = 7;
@@ -116,7 +117,7 @@ test('pedido entregado no puede reabrirse por PUT', async () => {
   const app = buildApp({
     withTransaction: async work => work(async sql => {
       if (sql.includes('FROM pedidos p')) return [{ ...pedidoBase, estado: 'entregado' }];
-      if (sql.includes('FROM choferes')) return [{ id: 7 }];
+      if (sql.includes('FROM choferes')) return [{ id: 7, usuario_id: 70 }];
       if (sql.includes('UPDATE')) updateCalls += 1;
       return [];
     }),
@@ -192,7 +193,7 @@ test('estados terminales, NULL, variantes y desconocidos persistidos fallan 409 
     const app = buildApp({
       withTransaction: async work => work(async sql => {
         if (sql.includes('FROM pedidos p')) return [{ ...pedidoBase, estado: source }];
-        if (sql.includes('FROM choferes')) return [{ id: 7 }];
+        if (sql.includes('FROM choferes')) return [{ id: 7, usuario_id: 70 }];
         if (sql.includes('UPDATE')) updateCalls += 1;
         return [];
       }),
@@ -214,7 +215,7 @@ test('pedido de otro chofer responde 403 y pedido vacante no pendiente responde 
     const app = buildApp({
       withTransaction: async work => work(async sql => {
         if (sql.includes('FROM pedidos p')) return [pedido];
-        if (sql.includes('FROM choferes')) return [{ id: 7 }];
+        if (sql.includes('FROM choferes')) return [{ id: 7, usuario_id: 70 }];
         if (sql.includes('UPDATE')) updateCalls += 1;
         return [];
       }),
@@ -248,7 +249,7 @@ test('PUT revalida chofer activo del tenant bajo lock antes de cualquier mutaci�
     const driverLock = calls.find(call => call.sql.includes('FROM choferes'));
     assert.ok(driverLock, scenario);
     assert.match(driverLock.sql, /id\s*=\s*\$1[\s\S]*empresa_id\s*=\s*\$2[\s\S]*activo\s+IS\s+TRUE[\s\S]*FOR SHARE/i);
-    assert.deepEqual(driverLock.params, [7, 3]);
+    assert.deepEqual(driverLock.params, [7, 3, 70]);
     assert.equal(calls.some(call => /^\s*UPDATE\b/i.test(call.sql)), false, scenario);
   }
 });
@@ -276,7 +277,7 @@ test('validación posterior de cuenta corriente no toma pedido vacante', async (
   const app = buildApp({
     withTransaction: async work => work(async sql => {
       if (sql.includes('FROM pedidos p')) return [{ ...pedidoBase, chofer_id: null }];
-      if (sql.includes('FROM choferes')) return [{ id: 7 }];
+      if (sql.includes('FROM choferes')) return [{ id: 7, usuario_id: 70 }];
       if (sql.includes('SELECT id, cuenta_corriente_habilitada')) {
         return [{ id: 9, cuenta_corriente_habilitada: false }];
       }
@@ -320,7 +321,7 @@ test('fallo al actualizar punto de entrega revierte el pedido y no ejecuta efect
     try {
       return await work(async sql => {
         if (sql.includes('FROM pedidos p')) return [{ ...pedidoBase, ...state, zona_id: null }];
-        if (sql.includes('FROM choferes')) return [{ id: 7 }];
+        if (sql.includes('FROM choferes')) return [{ id: 7, usuario_id: 70 }];
         if (sql.includes('FROM zona_chofer')) return [{ zona_id: 5 }];
         if (sql.includes('to_jsonb(pe)')) return [{ id: 9, empresa_id: 3 }];
         if (sql.includes('pg_advisory_xact_lock')) return [];
@@ -363,7 +364,7 @@ test('COMMIT ambiguo responde 503 sanitizado, no reintenta ni ejecuta efectos', 
       attempts += 1;
       await work(async sql => {
         if (sql.includes('FROM pedidos p')) return [pedidoBase];
-        if (sql.includes('FROM choferes')) return [{ id: 7 }];
+        if (sql.includes('FROM choferes')) return [{ id: 7, usuario_id: 70 }];
         if (sql.includes('UPDATE pedidos')) return [{ id: 42 }];
         return [];
       });
@@ -395,7 +396,7 @@ test('efectos se lanzan sólo después de commit y capturan throws síncronos/re
       order.push('begin');
       const result = await work(async sql => {
         if (sql.includes('FROM pedidos p')) return [pedidoBase];
-        if (sql.includes('FROM choferes')) return [{ id: 7 }];
+        if (sql.includes('FROM choferes')) return [{ id: 7, usuario_id: 70 }];
         if (sql.includes('UPDATE pedidos')) return [{ id: 42 }];
         return [];
       });
@@ -424,6 +425,13 @@ async function setupPostgresPutFixture(pool) {
       empresa_id integer NOT NULL,
       activo boolean NOT NULL
     );
+    CREATE TABLE usuarios (
+      id integer PRIMARY KEY,
+      empresa_id integer NOT NULL,
+      chofer_id integer NOT NULL,
+      role text NOT NULL,
+      activo boolean NOT NULL
+    );
     CREATE TABLE puntos_entrega (
       id integer PRIMARY KEY,
       empresa_id integer NOT NULL,
@@ -442,19 +450,36 @@ async function setupPostgresPutFixture(pool) {
       chofer_id integer,
       estado text,
       metodo_pago text,
+      metodo_pago_origen text,
+      metodo_pago_seleccionado_at timestamptz,
+      metodo_pago_outbound_message_id text,
+      metodo_pago_inbound_message_id text,
       zona_id integer,
       punto_entrega_id integer
     );
+    CREATE TABLE pedido_metodo_pago_eventos (
+      id bigserial PRIMARY KEY,
+      empresa_id integer NOT NULL,
+      pedido_id integer NOT NULL,
+      metodo_pago text NOT NULL,
+      origen text NOT NULL,
+      resultado text NOT NULL,
+      actor_usuario_id integer,
+      actor_chofer_id integer,
+      notification_status text NOT NULL
+    );
     INSERT INTO choferes VALUES (7,3,TRUE),(8,3,TRUE);
+    INSERT INTO usuarios VALUES (70,3,7,'repartidor',TRUE),(80,3,8,'repartidor',TRUE);
     INSERT INTO puntos_entrega VALUES (9,3,false,NULL);
     INSERT INTO zona_chofer VALUES (3,7,5),(3,8,6);
-    INSERT INTO pedidos VALUES (42,3,NULL,'pendiente','efectivo',NULL,9);
+    INSERT INTO pedidos (id,empresa_id,chofer_id,estado,metodo_pago,zona_id,punto_entrega_id)
+    VALUES (42,3,NULL,'pendiente','efectivo',NULL,9);
   `);
 }
 
 function buildPostgresApp(pool, choferId) {
   return buildApp({
-    user: { role: 'repartidor', empresa_id: 3, chofer_id: choferId },
+    user: { uid: choferId === 7 ? 70 : 80, role: 'repartidor', empresa_id: 3, chofer_id: choferId },
     query: async (sql, params = []) => (await pool.query(sql, params)).rows,
     withTransaction: work => canonicalWithTransaction(work, { pool, maxRetries: 0 }),
   });

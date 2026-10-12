@@ -20,6 +20,11 @@ function requireMetaWamid(value, field) {
   return wamid;
 }
 
+const PAYMENT_BUTTON_PAYLOADS = new Set([
+  'pedivoy_payment_cash_v1',
+  'pedivoy_payment_transfer_v1',
+]);
+
 function sanitizeMessage(message) {
   const type = requireNonEmptyString(message?.type, 'message type');
   const content = {};
@@ -28,6 +33,13 @@ function sanitizeMessage(message) {
       throw new WhatsAppCloudEventError('invalid_event', 'Invalid text body');
     }
     content.text = { body: message.text.body };
+  } else if (type === 'button') {
+    const payload = message?.button?.payload;
+    if (typeof payload !== 'string' || !PAYMENT_BUTTON_PAYLOADS.has(payload)) {
+      throw new WhatsAppCloudEventError('invalid_event', 'Invalid button payload');
+    }
+    content.button = { payload };
+    content.context = { id: requireMetaWamid(message?.context?.id, 'context message id') };
   } else if (type === 'image' || type === 'document') {
     const media = message?.[type];
     if (typeof media?.id !== 'string' || !media.id.trim()) {

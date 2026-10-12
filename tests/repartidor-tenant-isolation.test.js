@@ -39,7 +39,8 @@ async function setupReadFixture(pool) {
     CREATE TABLE pedidos (
       id integer PRIMARY KEY, empresa_id integer NOT NULL, chofer_id integer, estado text,
       fecha timestamptz DEFAULT NOW(), fecha_entrega timestamptz, fecha_entrega_estimada date,
-      punto_entrega_id integer, cantidad numeric, monto numeric, metodo_pago text, zona_id integer
+      punto_entrega_id integer, cantidad numeric, monto numeric, metodo_pago text,
+      metodo_pago_origen text, metodo_pago_seleccionado_at timestamptz, zona_id integer
     );
     CREATE TABLE zonas_geograficas (id integer PRIMARY KEY, empresa_id integer, nombre text, dias_entrega text);
     CREATE TABLE items_pedido (

@@ -5,6 +5,8 @@ import {
   enqueueOrderEnRouteWppMessage,
   enqueueTransferPaymentWppMessage,
 } from './messaging.js';
+import { isWhatsappCloudActive } from '../wpp/enqueue.js';
+import { validateTemplateMapping } from '../whatsappCloud/utilityTemplates.js';
 
 let pedidosNotificationSchemaReady = false;
 
@@ -182,7 +184,8 @@ export function createNotificarPedidoTransferencia({
         pe.telefono,
         pe.direccion,
         e.nombre AS empresa_nombre,
-        e.id    AS empresa_id
+        e.id    AS empresa_id,
+        e.config_integraciones
       FROM pedidos p
       JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
       JOIN empresas e        ON e.id = pe.empresa_id
@@ -255,6 +258,19 @@ export function createNotificarPedidoTransferencia({
             },
           }
         : null;
+
+      let cloudActive = false;
+      try { cloudActive = isWhatsappCloudActive(datos.config_integraciones); } catch {}
+      if (cloudActive) {
+        let mappingAvailable = false;
+        try {
+          validateTemplateMapping(datos.config_integraciones?.whatsapp?.templates?.transfer_payment);
+          mappingAvailable = true;
+        } catch {}
+        if (!utilityTemplate || !mappingAvailable) {
+          return { queued: false, skipped: true, reason: 'transfer_notification_unavailable' };
+        }
+      }
 
       return await enqueueWppMessageFn({
         phone: datos.telefono,

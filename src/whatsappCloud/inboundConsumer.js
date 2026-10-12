@@ -45,6 +45,7 @@ export function createWhatsAppCloudInboundConsumer({
   renewLease,
   finish,
   processBotMessage,
+  processPaymentChoice = null,
   prepareReceipt = null,
   processReceipt = null,
   scheduleRetry = null,
@@ -58,6 +59,7 @@ export function createWhatsAppCloudInboundConsumer({
   if (!owner || typeof claimNext !== 'function' || typeof loadTenant !== 'function'
       || typeof startProcessing !== 'function' || typeof renewLease !== 'function'
       || typeof finish !== 'function' || typeof processBotMessage !== 'function'
+      || (processPaymentChoice !== null && typeof processPaymentChoice !== 'function')
       || (prepareReceipt !== null && typeof prepareReceipt !== 'function')
       || (processReceipt !== null && typeof processReceipt !== 'function')
       || (prepareReceipt !== null && typeof scheduleRetry !== 'function')) {
@@ -80,19 +82,27 @@ export function createWhatsAppCloudInboundConsumer({
       return { outcome: 'skipped', eventId: row.id, errorCode: 'cloud_config_invalid' };
     }
     const isReceipt = row.message_type === 'image' || row.message_type === 'document';
-    if (row.message_type !== 'text' && !isReceipt) {
+    const isPaymentChoice = row.message_type === 'button';
+    if (row.message_type !== 'text' && !isReceipt && !isPaymentChoice) {
       await finish({ id: row.id, owner, state: 'skipped', errorCode: 'unsupported_message_type' });
       return { outcome: 'skipped', eventId: row.id, errorCode: 'unsupported_message_type' };
     }
     const text = row.event_data?.text?.body;
     const media = isReceipt ? row.event_data?.[row.message_type] : null;
-    if (!isReceipt && (typeof text !== 'string' || !text.trim())) {
+    const buttonPayload = isPaymentChoice ? row.event_data?.button?.payload : null;
+    const contextMessageId = isPaymentChoice ? row.event_data?.context?.id : null;
+    if (!isReceipt && !isPaymentChoice && (typeof text !== 'string' || !text.trim())) {
       await finish({ id: row.id, owner, state: 'skipped', errorCode: 'invalid_text_message' });
       return { outcome: 'skipped', eventId: row.id, errorCode: 'invalid_text_message' };
     }
     if (isReceipt && (!processReceipt || typeof media?.id !== 'string' || !media.id.trim())) {
       await finish({ id: row.id, owner, state: 'skipped', errorCode: 'invalid_media_message' });
       return { outcome: 'skipped', eventId: row.id, errorCode: 'invalid_media_message' };
+    }
+    if (isPaymentChoice && (!processPaymentChoice || typeof buttonPayload !== 'string'
+        || typeof contextMessageId !== 'string')) {
+      await finish({ id: row.id, owner, state: 'skipped', errorCode: 'invalid_button_message' });
+      return { outcome: 'skipped', eventId: row.id, errorCode: 'invalid_button_message' };
     }
 
     let heartbeat = null;
@@ -161,6 +171,16 @@ export function createWhatsAppCloudInboundConsumer({
         const receiptResult = await processReceipt({ ...common, media, messageType: row.message_type, tenant, prepared });
         if (receiptResult?.handled !== true) {
           throw Object.assign(new Error('cloud_receipt_outcome_unknown'), { code: 'cloud_receipt_outcome_unknown' });
+        }
+      } else if (isPaymentChoice) {
+        const choiceResult = await processPaymentChoice({
+          ...common,
+          tenant,
+          buttonPayload,
+          contextMessageId,
+        });
+        if (choiceResult?.handled !== true) {
+          throw Object.assign(new Error('cloud_payment_choice_outcome_unknown'), { code: 'cloud_payment_choice_outcome_unknown' });
         }
       } else await processBotMessage({ ...common, text });
       await assertLease();
