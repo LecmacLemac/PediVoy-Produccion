@@ -1164,13 +1164,13 @@ export function createRepartidorApiRouter(deps) {
    const hasMetodoPago = Object.hasOwn(body, 'metodo_pago');
    const metodosPagoPermitidos = new Set(['efectivo', 'transferencia', 'cuenta_corriente']);
    // 'movimientos' viene del Modal de Activos del Frontend
-	 const { movimientos = [], retornables = [], zona_id = null, metodo_pago = null, checklist = null, evidencia = null } = body;
+	 const { movimientos = [], retornables = [], zona_id = null, checklist = null, evidencia = null } = body;
    const hasZonaId = Object.hasOwn(body, 'zona_id') && zona_id != null;
 
    if (!chofer_id) return res.status(403).json({ error: 'No autorizado: Falta chofer_id' });
    if (!Number.isFinite(pedidoId)) return res.status(400).json({ error: 'ID de pedido inválido' });
-   if (hasMetodoPago && (typeof metodo_pago !== 'string' || !metodosPagoPermitidos.has(metodo_pago))) {
-     return res.status(400).json({ error: 'Método de pago inválido' });
+   if (hasMetodoPago) {
+     return res.status(400).json({ error: 'La forma de pago debe seleccionarse antes de cerrar la entrega' });
    }
    if (hasZonaId && (!Number.isSafeInteger(zona_id) || zona_id <= 0)) {
      return res.status(400).json({ error: 'Zona inválida' });
@@ -1205,7 +1205,7 @@ export function createRepartidorApiRouter(deps) {
 
      const pedido = pedQ.rows[0];
      const estadoAnterior = pedido.estado;
-     const metodoPagoFinal = hasMetodoPago ? metodo_pago : pedido.metodo_pago;
+     const metodoPagoFinal = pedido.metodo_pago;
 
      // 3. Revalidar y bloquear la identidad operativa dentro de la transacción.
      // Orden global de locks: pedido -> chofer -> punto/zona.
@@ -1449,15 +1449,14 @@ export function createRepartidorApiRouter(deps) {
        SET estado = 'entregado',
            fecha_entrega = $2,
            cantidad_entregada = cantidad, -- Asumimos entrega total por defecto
-           metodo_pago = $3,
-           zona_id = COALESCE($4, zona_id)
+           zona_id = COALESCE($3, zona_id)
        WHERE id = $1
-         AND empresa_id = $5
-         AND chofer_id = $6
-         AND estado = $7
+         AND empresa_id = $4
+         AND chofer_id = $5
+         AND estado = $6
        RETURNING id
        `,
-       [pedidoId, fechaEntregaIso, metodoPagoFinal, zonaIdToSet, empresa_id, chofer_id, estadoAnterior]
+       [pedidoId, fechaEntregaIso, zonaIdToSet, empresa_id, chofer_id, estadoAnterior]
      );
      if (pedidoActualizado.rows.length !== 1) {
        throw deliveryHttpError(409, 'El pedido cambió durante el cierre');

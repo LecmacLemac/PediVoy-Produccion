@@ -79,6 +79,7 @@ function deliveryClient({
   estado = 'en_ruta',
   choferRows = [{ id: 7 }],
   metodoPago = 'efectivo',
+  metodoPagoOrigen = null,
   retornables = [],
   activos = [],
   consumibles = [],
@@ -162,6 +163,7 @@ function deliveryClient({
           chofer_id: 7,
           estado,
           metodo_pago: metodoPago,
+          metodo_pago_origen: metodoPagoOrigen,
           zona_id: zonaId,
           punto_entrega_id: 9,
           punto_entrega_tenant_id: puntoEntregaTenantId,
@@ -666,7 +668,7 @@ test('locks de entrega respetan pedido -> chofer -> punto/zona', async () => {
   assert.ok(pedidoIndex >= 0 && choferIndex > pedidoIndex && puntoIndex > choferIndex && zonaIndex > choferIndex);
 });
 
-test('metodo_pago de cierre exige allowlist canónica exacta antes de abrir transacción', async (t) => {
+test('POST /entregar rechaza metodo_pago inválido antes de abrir transacción', async (t) => {
   const invalidos = ['inventado', 'Efectivo', ' efectivo', 'efectivo ', null, 1, true, {}];
   for (const metodo_pago of invalidos) {
     await t.test(JSON.stringify(metodo_pago), async () => {
@@ -677,10 +679,47 @@ test('metodo_pago de cierre exige allowlist canónica exacta antes de abrir tran
         metodo_pago,
       });
       assert.equal(result.status, 400);
-      assert.deepEqual(result.body, { error: 'Método de pago inválido' });
+      assert.deepEqual(result.body, { error: 'La forma de pago debe seleccionarse antes de cerrar la entrega' });
       assert.equal(calls.length, 0);
     });
   }
+});
+
+test('POST /entregar no permite reemplazar la selección cliente ni auditar un segundo writer', async () => {
+  const metodoPagoPersistido = 'transferencia';
+  const { client, calls } = deliveryClient({
+    metodoPago: metodoPagoPersistido,
+    metodoPagoOrigen: 'cliente_whatsapp',
+  });
+
+  const result = await postDelivery(client, {
+    movimientos: [],
+    checklist: validChecklist,
+    metodo_pago: 'efectivo',
+  });
+
+  assert.equal(result.status, 400);
+  assert.deepEqual(result.body, { error: 'La forma de pago debe seleccionarse antes de cerrar la entrega' });
+  assert.equal(calls.length, 0);
+  assert.equal(calls.some(({ sql }) => sql.includes('UPDATE pedidos')), false);
+  assert.equal(calls.some(({ sql }) => sql.includes('INSERT INTO pedido_metodo_pago_eventos')), false);
+});
+
+test('POST /entregar rechaza incluso repetir el metodo_pago ya persistido', async () => {
+  const { client, calls } = deliveryClient({
+    metodoPago: 'transferencia',
+    metodoPagoOrigen: 'cliente_whatsapp',
+  });
+
+  const result = await postDelivery(client, {
+    movimientos: [],
+    checklist: validChecklist,
+    metodo_pago: 'transferencia',
+  });
+
+  assert.equal(result.status, 400);
+  assert.deepEqual(result.body, { error: 'La forma de pago debe seleccionarse antes de cerrar la entrega' });
+  assert.equal(calls.length, 0);
 });
 
 test('método persistido no canónico falla cerrado al cerrar sin override', async (t) => {
@@ -740,8 +779,9 @@ test('UPDATE final conserva estado esperado exacto para en_ruta y en_camino', as
       assert.equal(result.status, 200);
       const finalUpdate = calls.find(({ sql }) => sql.includes("SET estado = 'entregado'"));
       assert.ok(finalUpdate);
-      assert.match(finalUpdate.sql, /AND estado = \$7/);
-      assert.equal(finalUpdate.params[6], estado);
+      assert.doesNotMatch(finalUpdate.sql, /metodo_pago\s*=/);
+      assert.match(finalUpdate.sql, /AND estado = \$6/);
+      assert.equal(finalUpdate.params[5], estado);
     });
   }
 });
@@ -766,8 +806,9 @@ test('UPDATE final exact-row vacío revierte y no ejecuta stock ni postcommit', 
     assert.deepEqual(await response.json(), { error: 'El pedido cambió durante el cierre' });
   });
   const finalUpdate = calls.find(({ sql }) => sql.includes("SET estado = 'entregado'"));
-  assert.match(finalUpdate.sql, /WHERE\s+id\s*=\s*\$1[\s\S]*empresa_id\s*=\s*\$5[\s\S]*chofer_id\s*=\s*\$6[\s\S]*estado\s*=\s*\$7[\s\S]*RETURNING\s+id/i);
-  assert.deepEqual(finalUpdate.params.slice(4), [3, 7, 'en_ruta']);
+  assert.match(finalUpdate.sql, /WHERE\s+id\s*=\s*\$1[\s\S]*empresa_id\s*=\s*\$4[\s\S]*chofer_id\s*=\s*\$5[\s\S]*estado\s*=\s*\$6[\s\S]*RETURNING\s+id/i);
+  assert.doesNotMatch(finalUpdate.sql, /metodo_pago\s*=/);
+  assert.deepEqual(finalUpdate.params.slice(3), [3, 7, 'en_ruta']);
   assert.equal(calls.some(({ sql }) => sql.includes('INSERT INTO chofer_stock_mov')), false);
   assert.equal(calls.filter(({ sql }) => sql === 'ROLLBACK').length, 1);
   assert.equal(calls.some(({ sql }) => sql === 'COMMIT'), false);
@@ -970,7 +1011,7 @@ test('COMMIT ambiguo responde 503, no revierte ni ejecuta tareas post-entrega y 
 });
 
 test('throws síncronos y rechazos de tareas postcommit no cambian el éxito ni intentan rollback', async () => {
-  const { client, calls: sqlCalls } = deliveryClient();
+  const { client, calls: sqlCalls } = deliveryClient({ metodoPago: 'transferencia' });
   const taskCalls = [];
   const syncFailure = name => () => {
     taskCalls.push(name);
@@ -997,7 +1038,6 @@ test('throws síncronos y rechazos de tareas postcommit no cambian el éxito ni 
       body: JSON.stringify({
         movimientos: [],
         checklist: validChecklist,
-        metodo_pago: 'transferencia',
       }),
     });
     assert.equal(response.status, 200);
