@@ -76,7 +76,7 @@ export function createPublicLandingRouter(deps) {
         sql += ` AND mostrar_en_landing = true`;
       }
 
-      sql += ` ORDER BY orden ASC, id DESC`;
+      sql += ` ORDER BY orden ASC NULLS LAST, id ASC`;
 
       const rows = await query(sql, [empresaId]);
       return res.json(rows);

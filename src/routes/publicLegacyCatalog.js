@@ -204,8 +204,7 @@ export function createPublicLegacyCatalogRouter({ query, withTransaction }) {
       else if (scope === 'catalog') sql += ` AND mostrar_en_catalogo = true`;
       if (soloDestacados) sql += ` AND destacado = true`;
 
-      if (scope === 'landing') sql += ` ORDER BY etiqueta NULLS LAST, precio ASC`;
-      else sql += ` ORDER BY categoria NULLS LAST, COALESCE(orden, id), nombre`;
+      sql += ` ORDER BY orden ASC NULLS LAST, id ASC`;
 
       const rows = await query(sql, [empresa_id]);
       return res.json(rows);
