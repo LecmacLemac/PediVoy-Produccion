@@ -464,11 +464,16 @@ test('cambiar pedido a transferencia no envia WhatsApp antes del modal QR', asyn
         }];
       }
 
-      if (sql.includes('FROM choferes')) return [{ id: 7 }];
+      if (sql.includes('FROM choferes')) return [{ id: 7, usuario_id: 17 }];
 
       if (sql.includes('UPDATE pedidos')) {
         assert.deepEqual(params, [7, 'transferencia', 42, 3]);
         return [{ id: 42 }];
+      }
+
+      if (sql.includes('INSERT INTO pedido_metodo_pago_eventos')) {
+        assert.deepEqual(params, [3, 42, 'transferencia', 17, 7]);
+        return [{ id: 1 }];
       }
 
       throw new Error(`Consulta inesperada: ${sql}`);
@@ -507,7 +512,7 @@ test('repartidor notifica al cliente cuando inicia ruta', async () => {
         }];
       }
 
-      if (sql.includes('FROM choferes')) return [{ id: 7 }];
+      if (sql.includes('FROM choferes')) return [{ id: 7, usuario_id: 17 }];
 
       if (sql.includes('UPDATE pedidos')) {
         assert.deepEqual(params, [7, 'en_ruta', 42, 3]);
