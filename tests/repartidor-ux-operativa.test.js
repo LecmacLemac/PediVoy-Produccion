@@ -11,6 +11,28 @@ const gpsSource = read('pedidos/repartidor-mapa-gps.js');
 const entregaSource = read('pedidos/repartidor-entrega.js');
 const slice = (source, start, end) => source.slice(source.indexOf(start), source.indexOf(end));
 
+// Synthetic Google SDK doubles; only the separate live smoke contacts Google.
+function configureGoogleRenderer(context, onMarker = () => {}) {
+  Object.assign(context, {
+    googleMapsAuthorizationFailed: false,
+    loadRepartidorGoogleMaps: async () => ({ mapId: 'synthetic-map-id' }),
+    resizeRepartidorMap() {},
+    showRepartidorMapError(message) { throw new Error(message); },
+    document: { getElementById: () => null, createElement: () => ({ style: {}, textContent: '' }) },
+    mapMarkers: [],
+    mapInfoWindow: { close() {}, setContent() {}, open() {} },
+    google: { maps: {
+      marker: { AdvancedMarkerElement: class {
+        constructor(options) { Object.assign(this, options); onMarker(this); }
+        addListener() {}
+      } },
+      LatLngBounds: class { extend() {} },
+      event: { addListenerOnce() {} },
+    } },
+  });
+}
+
+
 test('tarjetas y mapa usan controles segmentados accesibles con contadores', () => {
   assert.doesNotMatch(html, /<select[^>]+id="(?:fEstado|mapFiltroEstado)"/);
   const labels = { pedidos: 'Filtrar pedidos de la lista', mapa: 'Filtrar pedidos del mapa' };
@@ -23,7 +45,7 @@ test('tarjetas y mapa usan controles segmentados accesibles con contadores', () 
   }
 });
 
-test('Solo Hoy desaparece y los estados operativos incluyen pedidos de cualquier fecha', () => {
+test('Solo Hoy desaparece y los estados operativos incluyen pedidos de cualquier fecha', async () => {
   assert.doesNotMatch(html, /Solo Hoy|id="fHoy"|id="mapSoloHoy"/);
   assert.doesNotMatch(core, /soloHoy|#fHoy/);
   assert.doesNotMatch(pedidosSource, /fHoy|#fHoy/);
@@ -68,8 +90,9 @@ test('Solo Hoy desaparece y los estados operativos incluyen pedidos de cualquier
     esc: String,
     L: { divIcon: (options) => options, marker: () => ({ addTo() { markers += 1; return this; }, bindPopup() {} }) },
   });
-  vm.runInContext(slice(gpsSource, 'function renderMap()', '// --- GPS TRACKING'), mapContext);
-  mapContext.renderMap();
+  configureGoogleRenderer(mapContext, () => { markers += 1; });
+  vm.runInContext(slice(gpsSource, 'async function renderMap()', '// --- GPS TRACKING'), mapContext);
+  await mapContext.renderMap();
   assert.equal(markers, 2);
 });
 
@@ -109,7 +132,8 @@ test('abrir y cerrar los filtros secundarios recalcula el tamaño del mapa en el
   };
   const context = vm.createContext({
     $: (selector) => nodes[selector],
-    map: { invalidateSize() { invalidations += 1; } },
+    map: {},
+    resizeRepartidorMap() { invalidations += 1; },
     centerMapOnDriver() {},
     requestAnimationFrame(callback) {
       animationFrames += 1;
@@ -357,7 +381,7 @@ test('las tarjetas históricas conservan zona y búsqueda y ordenan por entrega 
   assert.deepEqual(Array.from(context.getFilteredPedidos(), (pedido) => pedido.id), [2, 1]);
 });
 
-test('el mapa histórico muestra sólo entregados recientes en verde y conserva GPS', () => {
+test('el mapa histórico muestra sólo entregados recientes en verde y conserva GPS', async () => {
   const nodes = { '#mapHint': { textContent: '' } };
   const markerIcons = [];
   let gpsRenders = 0;
@@ -386,9 +410,10 @@ test('el mapa histórico muestra sólo entregados recientes en verde y conserva 
       marker(_position, options) { markerIcons.push(options.icon.html); return { addTo() { return this; }, bindPopup() {} }; },
     },
   });
-  vm.runInContext(slice(gpsSource, 'function renderMap()', '// --- GPS TRACKING'), context);
+  configureGoogleRenderer(context, marker => markerIcons.push(marker.content.style.borderLeft));
+  vm.runInContext(slice(gpsSource, 'async function renderMap()', '// --- GPS TRACKING'), context);
 
-  context.renderMap();
+  await context.renderMap();
 
   assert.equal(markerIcons.length, 1);
   assert.match(markerIcons[0], /#10b981/);
@@ -422,23 +447,25 @@ test('la ubicación GPS actualiza marcador y precisión sin recentrar automátic
   const centerButton = { disabled: true };
   const marker = {
     popup: '',
-    addTo() { return this; },
-    bindPopup(value) { this.popup = value; return this; },
-    setLatLng(value) { this.latlng = value; return this; },
+    addListener(_event, callback) { this.click = callback; },
   };
   const circle = {
-    addTo() { return this; },
-    setLatLng(value) { this.latlng = value; return this; },
-    setRadius(value) { this.radius = value; return this; },
+    setCenter(value) { this.center = value; },
+    setRadius(value) { this.radius = value; },
   };
   const context = vm.createContext({
-    document: { getElementById: (id) => id === 'mapCenterMe' ? centerButton : null },
-    map: { setView() { setViewCalls += 1; }, removeLayer() {} },
-    L: {
-      divIcon: (options) => options,
-      marker: () => { markerCreates += 1; return marker; },
-      circle: () => { circleCreates += 1; return circle; },
-    },
+    document: { getElementById: (id) => id === 'mapCenterMe' ? centerButton : null, createElement: () => ({}) },
+    map: { setCenter() { setViewCalls += 1; } },
+    googleMapsAuthorizationFailed: false,
+    mapInfoWindow: { setContent(value) { marker.popup = value; }, open() {} },
+    google: { maps: {
+      marker: { AdvancedMarkerElement: class {
+        constructor(options) { markerCreates += 1; Object.assign(marker, options); return marker; }
+      } },
+      Circle: class {
+        constructor(options) { circleCreates += 1; Object.assign(circle, options); return circle; }
+      },
+    } },
     Number,
   });
   const locationSource = slice(gpsSource, 'let driverLocationMarker', '// --- MAPA ---');
@@ -449,8 +476,11 @@ test('la ubicación GPS actualiza marcador y precisión sin recentrar automátic
 
   assert.equal(markerCreates, 1);
   assert.equal(circleCreates, 1);
-  assert.deepEqual(Array.from(marker.latlng), [-31.41, -64.19]);
+  assert.equal(marker.position.lat, -31.41);
+  assert.equal(marker.position.lng, -64.19);
+  assert.equal(circle.center.lat, -31.41);
   assert.equal(circle.radius, 12);
+  marker.click();
   assert.match(marker.popup, /Mi ubicación/);
   assert.equal(centerButton.disabled, false);
   assert.equal(setViewCalls, 0);
@@ -576,7 +606,7 @@ test('setStatus actualiza el marcador inmediatamente al iniciar ruta sin otra le
 
 test('renderizar clientes conserva y restaura la capa de ubicación del repartidor', () => {
   const render = slice(gpsSource, 'function renderMap()', '// --- GPS TRACKING');
-  assert.match(render, /mapMarkers\.clearLayers\(\)/);
+  assert.match(render, /mapMarkers\.forEach\(marker => \{ marker\.map = null; \}\)/);
   assert.match(render, /renderStoredDriverLocationOnMap\(\)/);
-  assert.doesNotMatch(render, /removeLayer\(driverLocationMarker|removeLayer\(driverAccuracyCircle/);
+  assert.doesNotMatch(render, /driverLocationMarker\.map\s*=\s*null|driverAccuracyCircle\.setMap\(null\)/);
 });

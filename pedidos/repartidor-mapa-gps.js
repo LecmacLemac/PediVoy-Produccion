@@ -3,7 +3,7 @@ function initRepartidorMapaGpsUI() {
   $('#mapCenterMe').onclick = centerMapOnDriver;
   $('#mapSecondaryFilters')?.addEventListener('toggle', () => {
     if (!map) return;
-    requestAnimationFrame(() => map.invalidateSize());
+    requestAnimationFrame(resizeRepartidorMap);
   });
 
 }
@@ -154,49 +154,41 @@ function updateDriverLocationOnMap(position) {
 }
 
 function renderStoredDriverLocationOnMap() {
-  if (!lastDriverLocation) return;
-  if (!map) return;
-
-  const { lat, lng } = lastDriverLocation;
-  const latlng = [lat, lng];
+  if (!lastDriverLocation || !map || googleMapsAuthorizationFailed) return;
+  const { lat, lng, accuracy } = lastDriverLocation;
+  const position = { lat, lng };
   if (!driverLocationMarker) {
-    const icon = L.divIcon({
-      className: '',
-      html: '<div class="driver-location-dot" aria-hidden="true"></div>',
-      iconSize: [18, 18],
-      iconAnchor: [9, 9],
+    const dot = document.createElement('div');
+    dot.className = 'driver-location-dot';
+    driverLocationMarker = new google.maps.marker.AdvancedMarkerElement({ map, position, content: dot, title: 'Mi ubicación', zIndex: 1000 });
+    driverLocationMarker.addListener('click', () => {
+      mapInfoWindow.setContent('<strong>Mi ubicación</strong>');
+      mapInfoWindow.open({ map, anchor: driverLocationMarker });
     });
-    driverLocationMarker = L.marker(latlng, { icon, zIndexOffset: 1000 })
-      .addTo(map)
-      .bindPopup('<strong>Mi ubicación</strong>');
   } else {
-    driverLocationMarker.setLatLng(latlng);
+    driverLocationMarker.position = position;
   }
-
-  if (lastDriverLocation.accuracy) {
+  if (accuracy) {
     if (!driverAccuracyCircle) {
-      driverAccuracyCircle = L.circle(latlng, {
-        radius: lastDriverLocation.accuracy,
-        color: '#2563eb',
-        weight: 1,
-        fillColor: '#3b82f6',
-        fillOpacity: 0.12,
-        interactive: false,
-      }).addTo(map);
+      driverAccuracyCircle = new google.maps.Circle({ map, center: position, radius: accuracy, strokeColor: '#2563eb', strokeWeight: 1, fillColor: '#3b82f6', fillOpacity: 0.12, clickable: false });
     } else {
-      driverAccuracyCircle.setLatLng(latlng).setRadius(lastDriverLocation.accuracy);
+      driverAccuracyCircle.setCenter(position);
+      driverAccuracyCircle.setRadius(accuracy);
     }
   } else if (driverAccuracyCircle) {
-    map.removeLayer(driverAccuracyCircle);
+    driverAccuracyCircle.setMap(null);
     driverAccuracyCircle = null;
   }
 }
 
-function centerMapOnDriver() {
+async function centerMapOnDriver() {
   if (!lastDriverLocation) return;
-  if (!map) renderMap();
-  map.setView([lastDriverLocation.lat, lastDriverLocation.lng], Math.max(map.getZoom?.() || 0, 16));
-  driverLocationMarker?.openPopup?.();
+  if (!map) await renderMap();
+  if (!map || googleMapsAuthorizationFailed) return;
+  map.setCenter({ lat: lastDriverLocation.lat, lng: lastDriverLocation.lng });
+  map.setZoom(16);
+  mapInfoWindow.setContent('<strong>Mi ubicación</strong>');
+  mapInfoWindow.open({ map, anchor: driverLocationMarker });
 }
 
 // --- MAPA ---
@@ -290,10 +282,83 @@ function buildRepartidorMapPopup(pedido, directionsUrl) {
   `;
 }
 
-function renderMap(){
-  if(!map) { map = L.map('map').setView([-31.4, -64.18], 12); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map); mapMarkers = L.layerGroup().addTo(map); }
-  map.invalidateSize(); mapMarkers.clearLayers();
-  renderStoredDriverLocationOnMap();
+let googleMapsLoadPromise = null;
+let googleMapsAuthorizationFailed = false;
+let mapInfoWindow = null;
+
+function showRepartidorMapError(message) {
+  const error = document.getElementById('mapError');
+  if (error) { error.textContent = message; error.hidden = false; }
+  const hint = document.getElementById('mapHint');
+  if (hint) hint.textContent = message;
+}
+
+function loadRepartidorGoogleMaps() {
+  if (googleMapsAuthorizationFailed) return Promise.reject(new Error('authorization'));
+  if (googleMapsLoadPromise) return googleMapsLoadPromise;
+  window.gm_authFailure = () => {
+    googleMapsAuthorizationFailed = true;
+    showRepartidorMapError('Google Maps no autorizó la clave. Revisá las restricciones y Maps JavaScript API.');
+  };
+  googleMapsLoadPromise = (async () => {
+    const response = await authFetch('/api/repartidor/maps-config', { cache: 'no-store' });
+    if (!response.ok) throw new Error(response.status === 503 ? 'configuration' : 'authentication');
+    const config = await response.json();
+    if (!config.apiKey) throw new Error('configuration');
+    if (!window.google?.maps?.marker?.AdvancedMarkerElement) {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        let settled = false;
+        const finish = (error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          delete window.repartidorGoogleMapsReady;
+          script.onerror = null;
+          if (error) { script.remove(); reject(error); } else resolve();
+        };
+        const timeout = setTimeout(() => finish(new Error('load')), 20000);
+        window.repartidorGoogleMapsReady = () => finish();
+        script.onerror = () => finish(new Error('load'));
+        const params = new URLSearchParams({ key: config.apiKey, libraries: 'marker', callback: 'repartidorGoogleMapsReady', loading: 'async', v: 'weekly', language: 'es', region: 'AR' });
+        script.src = `https://maps.googleapis.com/maps/api/js?${params}`;
+        script.async = true;
+        script.referrerPolicy = 'strict-origin-when-cross-origin';
+        document.head.appendChild(script);
+      });
+    }
+    if (googleMapsAuthorizationFailed) throw new Error('authorization');
+    return config;
+  })().catch(error => { googleMapsLoadPromise = null; throw error; });
+  return googleMapsLoadPromise;
+}
+
+function resizeRepartidorMap() {
+  if (!map || googleMapsAuthorizationFailed) return;
+  const center = map.getCenter();
+  google.maps.event.trigger(map, 'resize');
+  if (center) map.setCenter(center);
+}
+
+async function renderMap(){
+  try {
+    const config = await loadRepartidorGoogleMaps();
+    if (googleMapsAuthorizationFailed) return;
+    const error = document.getElementById('mapError');
+    if (error) error.hidden = true;
+    if (!map) {
+      map = new google.maps.Map(document.getElementById('map'), {
+        center: { lat: -31.4, lng: -64.18 }, zoom: 12,
+        mapId: config.mapId || 'DEMO_MAP_ID', mapTypeControl: false, streetViewControl: false,
+      });
+      mapMarkers = [];
+      mapInfoWindow = new google.maps.InfoWindow();
+    }
+    resizeRepartidorMap();
+    mapInfoWindow.close();
+    mapMarkers.forEach(marker => { marker.map = null; });
+    mapMarkers = [];
+    renderStoredDriverLocationOnMap();
 
   const historical = getHistoricalMode();
   const today = getOyString();
@@ -307,13 +372,34 @@ function renderMap(){
     } else if(normalizeOperationalStatus(String(p.estado || '').toLowerCase()) !== fSt) return;
     const lat = Number(p.latitud), lng = Number(p.longitud);
     const color = p.estado==='entregado'?'#10b981' : p.estado==='en_ruta'?'#06b6d4':'#f59e0b';
-    const icon = L.divIcon({ className: '', html: `<div class="m-label" style="border-left:4px solid ${color}">${esc(p.cliente.split(' ')[0])}</div>` });
+    const label = document.createElement('div');
+    label.className = 'm-label';
+    label.style.borderLeft = `4px solid ${color}`;
+    label.textContent = String(p.cliente || '').split(' ')[0];
     const popup = buildRepartidorMapPopup(p, directionsUrl);
-    L.marker([lat, lng], {icon}).addTo(mapMarkers).bindPopup(popup);
-    bounds.push([lat, lng]);
+    const marker = new google.maps.marker.AdvancedMarkerElement({ map, position: { lat, lng }, content: label, title: String(p.cliente || '') });
+    marker.addListener('click', () => {
+      mapInfoWindow.setContent(popup);
+      mapInfoWindow.open({ map, anchor: marker });
+    });
+    mapMarkers.push(marker);
+    bounds.push({ lat, lng });
   });
-  if(bounds.length) map.fitBounds(bounds, {padding:[50,50], maxZoom:16});
+  if(bounds.length) {
+    const googleBounds = new google.maps.LatLngBounds();
+    bounds.forEach(point => googleBounds.extend(point));
+    google.maps.event.addListenerOnce(map, 'idle', () => { if (map.getZoom() > 16) map.setZoom(16); });
+    map.fitBounds(googleBounds, 50);
+  }
   $('#mapHint').textContent = `${bounds.length} puntos visibles`;
+  } catch (error) {
+    const messages = {
+      configuration: 'Google Maps no está configurado. Configurá una clave de navegador restringida.',
+      authentication: 'No se pudo acceder a la configuración del mapa. Iniciá sesión como repartidor.',
+      authorization: 'Google Maps no autorizó la clave. Revisá las restricciones y Maps JavaScript API.',
+    };
+    showRepartidorMapError(messages[error.message] || 'No se pudo cargar Google Maps. Revisá tu conexión y actualizá el mapa.');
+  }
 }
 
 // --- GPS TRACKING LOOP (endurecido) ---

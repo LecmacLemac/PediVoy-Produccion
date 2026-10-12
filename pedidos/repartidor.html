@@ -6,8 +6,6 @@
   <title>Repartos – Dashboard</title>
   <link rel="stylesheet" href="theme-base.css" />
   
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
 
   <style>
@@ -414,6 +412,8 @@
 
     /* MAPA */
     .map-stage { position: relative; flex: 1; min-height: 0; }
+    #map .gm-style-iw, #map .gm-style-iw-d { color: #0f172a; }
+    #map .gm-style-iw .iconbtn.ghost { color: #475569; }
     .mapbox { height: 100%; width: 100%; border-radius: 12px; border: 1px solid var(--border); z-index: 1; }
     .map-center-button {
       position: absolute;
@@ -693,6 +693,7 @@
           <span aria-hidden="true">◎</span>
         </button>
       </div>
+      <small id="mapError" role="alert" hidden style="color:var(--danger);margin-top:5px"></small>
       <small class="muted" style="margin-top:5px" id="mapHint">Cargando...</small>
     </div>
   </section>

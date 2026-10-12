@@ -9,7 +9,7 @@ const source = fs.readFileSync(
 );
 const helpersSource = source.slice(
   source.indexOf('function getGoogleMapsDirectionsUrl'),
-  source.indexOf('function renderMap'),
+  source.indexOf('let googleMapsLoadPromise'),
 );
 const context = vm.createContext({
   encodeURIComponent,

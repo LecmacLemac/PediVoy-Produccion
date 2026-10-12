@@ -44,6 +44,17 @@ export function createRepartidorApiRouter(deps) {
     return next();
   }
 
+  // Browser credentials are intentionally separate from server geocoding keys.
+  router.get('/maps-config', withAuth, requireExactRepartidor, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const env = deps.mapsBrowserEnv || process.env;
+    const apiKey = String(env.GOOGLE_MAPS_BROWSER_API_KEY || '').trim();
+    if (!apiKey) {
+      return res.status(503).json({ error: 'Google Maps no está configurado. Configurá una clave de navegador restringida.' });
+    }
+    return res.json({ apiKey, mapId: String(env.GOOGLE_MAPS_MAP_ID || '').trim() || 'DEMO_MAP_ID' });
+  });
+
   async function ensureCuentaCorrienteSchema() {
     if (cuentaCorrienteSchemaReady) return;
     await query(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS cuenta_corriente_habilitada BOOLEAN DEFAULT FALSE`);
