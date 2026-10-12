@@ -64,7 +64,7 @@ test('signup-full usa transacción canónica sin retry y sanitiza COMMIT ambiguo
       insert += 1;
       return insert === 1
         ? [{ id: 7 }]
-        : [{ id: 9, username: 'nuevo.usuario', role: 'user', empresa_id: 7 }];
+        : [{ id: 9, username: 'nuevo.usuario', role: 'admin', empresa_id: 7 }];
     });
     const error = new Error('commit transport password=secret');
     error.code = 'TRANSACTION_OUTCOME_UNKNOWN';

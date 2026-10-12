@@ -112,7 +112,7 @@ export function createAuthGuestSignupRouter(deps) {
 
         const userRows = await txQuery(
           `INSERT INTO usuarios (username, password, role, empresa_id, telefono)
-           VALUES ($1, $2, 'user', $3, $4)
+           VALUES ($1, $2, 'admin', $3, $4)
            RETURNING id, username, role, empresa_id`,
           [username, hash, newEmpresaId, telefono]
         );

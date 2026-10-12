@@ -850,10 +850,10 @@ test('initDb usa user por defecto, limpia roles históricos inválidos y agrega 
   assert.doesNotMatch(initSql, /UPDATE\s+usuarios\s+SET\s+role\s*=\s*['"]super['"]/i);
 });
 
-test('signup-full owner user queda bloqueado y admin gestiona operativos con tenant DB', async () => {
+test('signup-full owner admin gestiona operativos sin salir de su tenant DB', async () => {
   for (const effectiveRole of ['admin']) {
     const calls = [];
-    const owner = { id: 100, username: 'owner', role: 'user', empresa_id: 3, activo: true };
+    const owner = { id: 100, username: 'owner', role: 'admin', empresa_id: 3, activo: true };
     const targets = [
       ...['user', 'admin', 'super'].map((role, i) => ({ id: i + 1, role, empresa_id: 3 })),
       { id: 4, role: 'contable', empresa_id: 999 },
@@ -880,7 +880,7 @@ test('signup-full owner user queda bloqueado y admin gestiona operativos con ten
         query: async sql => {
           if (/INSERT INTO empresas/.test(sql)) return { rows: [{ id: 3 }] };
           if (/INSERT INTO usuarios/.test(sql)) {
-            assert.match(sql, /VALUES \(\$1, \$2, 'user', \$3, \$4\)/);
+            assert.match(sql, /VALUES \(\$1, \$2, 'admin', \$3, \$4\)/);
             return { rows: [owner] };
           }
           return { rows: [] };
@@ -900,11 +900,12 @@ test('signup-full owner user queda bloqueado y admin gestiona operativos con ten
       });
       assert.equal(signup.status, 200);
       const { token, user } = await signup.json();
-      assert.equal(user.role, 'user');
-      const blockedOwner = await fetch(`${baseUrl}/api/admin/usuarios`, {
+      assert.equal(user.role, 'admin');
+      const ownerList = await fetch(`${baseUrl}/api/admin/usuarios`, {
         headers: { authorization: ['Bearer', token].join(' ') },
       });
-      assert.equal(blockedOwner.status, 403);
+      assert.equal(ownerList.status, 200);
+      assert.ok((await ownerList.json()).every(row => row.empresa_id === 3));
       const adminToken = jwt.sign({ uid: owner.id, role: 'admin', empresa_id: 3 }, process.env.JWT_SECRET || 'dev');
       const send = (method, path = '', body, authToken = adminToken) => fetch(`${baseUrl}/api/admin/usuarios${path}`, {
         method, headers: { authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },

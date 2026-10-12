@@ -31,7 +31,8 @@ const withTransaction = async (work, options) => {
       check('usuario INSERT executed', /^\s*INSERT\s+INTO\s+usuarios\b/i.test(sql));
       check('usuario linked to returned empresa', params[2] === 314);
       if (nextMode === 'usuario-empty') return [];
-      return [{ id: 9, username: params[0], role: 'user', empresa_id: params[2] }];
+      check('signup owner role fixed to tenant admin', /VALUES\s*\(\$1,\s*\$2,\s*'admin',\s*\$3,\s*\$4\)/.test(sql));
+      return [{ id: 9, username: params[0], role: 'admin', empresa_id: params[2] }];
     });
   } catch (error) {
     rollbackCalls += 1;
@@ -66,7 +67,7 @@ try {
     username: 'authority_owner', password: 'Password123!', empresa_nombre: 'Authority Co', empresa_id: 999,
   });
   const validBody = await valid.json();
-  check('valid request succeeds', valid.status === 200 && validBody?.user?.empresa_id === 314);
+  check('valid request succeeds', valid.status === 200 && validBody?.user?.empresa_id === 314 && validBody?.user?.role === 'admin');
 
   nextMode = 'empresa-empty';
   const empresaFailure = await post({ username: 'authority_emp_fail', password: 'Password123!', empresa_nombre: 'Fail Empresa' });
