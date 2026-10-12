@@ -91,7 +91,7 @@ test('Solo Hoy desaparece y los estados operativos incluyen pedidos de cualquier
     L: { divIcon: (options) => options, marker: () => ({ addTo() { markers += 1; return this; }, bindPopup() {} }) },
   });
   configureGoogleRenderer(mapContext, () => { markers += 1; });
-  vm.runInContext(slice(gpsSource, 'async function renderMap()', '// --- GPS TRACKING'), mapContext);
+  vm.runInContext(slice(gpsSource, 'async function renderMap(options = {})', '// --- GPS TRACKING'), mapContext);
   await mapContext.renderMap();
   assert.equal(markers, 2);
 });
@@ -107,7 +107,7 @@ test('los controles operativos quedan visibles y el histórico del mapa se ofrec
   assert.doesNotMatch(mapSection, /class="row secondary-filters"/);
 
   assert.match(html, /data-history-toggle="pedidos"[^>]+aria-pressed="false"[\s\S]*?Ver entregados de los últimos 7 días[\s\S]*?data-history-count="pedidos"/);
-  assert.match(mapSection, /<details id="mapSecondaryFilters" class="map-secondary-filters">[\s\S]*?<summary[^>]*>[^<]*Filtros secundarios[^<]*<\/summary>[\s\S]*?data-history-toggle="mapa"[^>]+aria-pressed="false"[\s\S]*?Ver entregados de los últimos 7 días[\s\S]*?data-history-count="mapa"[\s\S]*?<\/details>/);
+  assert.match(mapSection, /<details id="mapSecondaryFilters" class="map-secondary-filters">[\s\S]*?<summary[^>]*aria-label="Mostrar u ocultar filtros del mapa"[^>]*>[\s\S]*?<\/summary>[\s\S]*?data-history-toggle="mapa"[^>]+aria-pressed="false"[\s\S]*?Ver entregados de los últimos 7 días[\s\S]*?data-history-count="mapa"[\s\S]*?<\/details>/);
 
   for (const scope of ['pedidos', 'mapa']) {
     assert.match(html, new RegExp(`data-history-indicator="${scope}"[^>]+hidden[\\s\\S]*?Viendo: Entregados · últimos 7 días[\\s\\S]*?data-history-exit="${scope}"`));
@@ -411,7 +411,7 @@ test('el mapa histórico muestra sólo entregados recientes en verde y conserva 
     },
   });
   configureGoogleRenderer(context, marker => markerIcons.push(marker.content.style.borderLeft));
-  vm.runInContext(slice(gpsSource, 'async function renderMap()', '// --- GPS TRACKING'), context);
+  vm.runInContext(slice(gpsSource, 'async function renderMap(options = {})', '// --- GPS TRACKING'), context);
 
   await context.renderMap();
 
@@ -605,7 +605,7 @@ test('setStatus actualiza el marcador inmediatamente al iniciar ruta sin otra le
 });
 
 test('renderizar clientes conserva y restaura la capa de ubicación del repartidor', () => {
-  const render = slice(gpsSource, 'function renderMap()', '// --- GPS TRACKING');
+  const render = slice(gpsSource, 'function renderMap(options = {})', '// --- GPS TRACKING');
   assert.match(render, /mapMarkers\.forEach\(marker => \{ marker\.map = null; \}\)/);
   assert.match(render, /renderStoredDriverLocationOnMap\(\)/);
   assert.doesNotMatch(render, /driverLocationMarker\.map\s*=\s*null|driverAccuracyCircle\.setMap\(null\)/);

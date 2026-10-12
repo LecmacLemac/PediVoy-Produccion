@@ -1,3 +1,30 @@
+const repartidorViewScroll = Object.create(null);
+
+function showRepartidorSection(sec, { moveFocus = false } = {}) {
+  const target = document.getElementById('sec-' + sec);
+  if (!target) return;
+  const current = Array.from($$('main > section')).find(section => !section.hidden);
+  if (current === target) return;
+  if (current) repartidorViewScroll[current.id] = window.scrollY;
+  $$('.nav-link').forEach(link => {
+    if (link.dataset.sec === sec) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+  $$('main > section').forEach(section => { section.hidden = section !== target; });
+  $('#menuPanel')?.classList.remove('show');
+  $('#menuToggle')?.setAttribute('aria-expanded', 'false');
+  requestAnimationFrame(() => {
+    if (moveFocus) target.querySelector('[data-view-target]')?.focus({ preventScroll: true });
+    window.scrollTo({ top: repartidorViewScroll[target.id] || 0, behavior: 'instant' });
+    if (sec === 'mapa') renderMap({ preserveViewport: !!map });
+  });
+  if (sec === 'gastos') gInit();
+  if (sec === 'stock') loadStockRepartidor();
+  if (sec === 'resumen') calcResumen();
+  if (sec === 'transf') loadTransf();
+  if (sec === 'evidencias') loadEvidenciasEntrega();
+}
+
 function initRepartidorShellUI() {
   if (initRepartidorShellUI._ready) return;
   initRepartidorShellUI._ready = true;
@@ -23,20 +50,11 @@ function initRepartidorShellUI() {
       return;
     }
     
-    $$('.nav-link').forEach(n => n.removeAttribute('aria-current'));
-    l.setAttribute('aria-current', 'page');
-    $$('main > section').forEach(s => s.hidden = true);
-    
-    $('#sec-'+sec).hidden = false;
-    panel?.classList.remove('show');
-    btn?.setAttribute('aria-expanded', 'false');
+    showRepartidorSection(sec);
+  });
 
-    if(sec === 'mapa') setTimeout(renderMap, 200);
-    if(sec === 'gastos') gInit();
-    if(sec === 'stock') loadStockRepartidor();
-    if(sec === 'resumen') calcResumen();
-    if(sec === 'transf') loadTransf();
-    if(sec === 'evidencias') loadEvidenciasEntrega();
+  $$('[data-view-target]').forEach(button => {
+    button.addEventListener('click', () => showRepartidorSection(button.dataset.viewTarget, { moveFocus: true }));
   });
 
   const evDateFrom = document.getElementById('evDateFrom');

@@ -28,6 +28,20 @@ function harness() {
   return { context, nodes, run: source => vm.runInContext(source, context) };
 }
 
+test('returning to existing map refreshes markers without resetting camera', async () => {
+  const h = harness();
+  h.run(`pedidos = [{id:1,cliente:'Prueba',estado:'pendiente',latitud:-31.4,longitud:-64.18}];`);
+  await h.run('renderMap()');
+  h.run(`map.setCenter({lat:-31.5,lng:-64.3}); map.setZoom(14); map.fitBounds = () => { throw new Error('Unexpected camera reset'); };`);
+  const previous = h.run('mapMarkers[0]');
+  await h.run('renderMap({preserveViewport:true})');
+  assert.equal(h.run('map.getCenter().lat'), -31.5);
+  assert.equal(h.run('map.getZoom()'), 14);
+  assert.equal(h.run('mapMarkers.length'), 1);
+  assert.equal(previous.map, null);
+  assert.equal(h.nodes.get('mapError').hidden, true);
+});
+
 test('screen contains accessible Spanish map errors and does not load Leaflet', () => {
   const html = fs.readFileSync('pedidos/repartidor.html', 'utf8');
   assert.doesNotMatch(html, /leaflet/i);

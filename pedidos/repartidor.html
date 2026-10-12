@@ -228,6 +228,20 @@
       50% { opacity: 0.35; box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.28); }
     }
 
+    .view-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; flex-shrink:0; }
+    .view-toolbar-map { margin:4px 0 12px; }
+    .view-switch { display:inline-flex; align-items:center; gap:10px; min-height:44px; padding:0 16px; border:1px solid rgba(6,182,212,.4); border-radius:12px; color:#a5f3fc; background:rgba(6,182,212,.1); font:inherit; font-weight:750; cursor:pointer; transition:background .15s,border-color .15s; }
+    .view-switch:hover { background:rgba(6,182,212,.19); border-color:var(--brand); }
+    .view-switch-arrow { margin-left:8px; color:var(--brand); }
+    .view-switch svg, .filter-icon svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .filter-icon { display:flex; align-items:center; justify-content:center; width:44px; height:44px; border:1px solid var(--border); border-radius:12px; color:var(--muted); background:rgba(15,23,42,.45); cursor:pointer; list-style:none; }
+    .filter-icon:hover { color:var(--ink); border-color:var(--brand); }
+    .filter-icon[aria-expanded="true"], .map-secondary-filters[open] > summary { color:var(--brand); background:rgba(6,182,212,.1); border-color:rgba(6,182,212,.4); }
+    .view-switch:focus-visible, .filter-icon:focus-visible { outline:3px solid rgba(34,211,238,.55); outline-offset:3px; }
+    .filter-icon::-webkit-details-marker { display:none; }
+    .map-secondary-filters { position:relative; margin:0; }
+    .map-secondary-panel { position:absolute; right:0; top:48px; width:min(300px,calc(100vw - 64px)); z-index:20; padding:12px; background:#0f172a; box-shadow:0 12px 28px rgba(0,0,0,.35); }
+    @media (prefers-reduced-motion:reduce) { .view-switch { transition:none; } }
     /* PEDIDO CARD */
     .pedido-card {
       position: relative; margin-bottom: 1rem;
@@ -600,10 +614,15 @@
           En ruta <span class="status-count" data-status-count="en_ruta">0</span>
         </button>
       </div>
-      <button type="button" class="flex-bt iconbtn ghost" id="filtersToggle" aria-controls="filterBox" aria-expanded="true" onclick="toggleFilters()" style="width:100%; margin-top:0.75rem; padding-inline:0;">
-        <span style="font-weight:700; color:var(--ink);">Filtros</span>
-        <span aria-hidden="true" style="font-size:1.2rem">⚙️</span>
-      </button>
+      <div class="view-toolbar">
+        <button type="button" class="view-switch" data-view-target="mapa" aria-controls="sec-mapa" aria-label="Ver pedidos en el mapa">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Zm6-3v15m6-12v15"/></svg>
+          <span>Mapa</span><span class="view-switch-arrow" aria-hidden="true">→</span>
+        </button>
+        <button type="button" class="filter-icon" id="filtersToggle" aria-label="Mostrar u ocultar filtros de pedidos" title="Filtros de pedidos" aria-controls="filterBox" aria-expanded="true" onclick="toggleFilters()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg>
+        </button>
+      </div>
       <div id="filterBox">
         <div class="secondary-filters">
         <div class="row" style="align-items:flex-end">
@@ -674,14 +693,20 @@
           En ruta <span class="status-count" data-status-count="en_ruta">0</span>
         </button>
       </div>
+      <div class="view-toolbar view-toolbar-map">
+        <button type="button" class="view-switch" data-view-target="pedidos" aria-controls="sec-pedidos" aria-label="Volver a la lista de pedidos">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1"/></svg>
+          <span>Pedidos</span><span class="view-switch-arrow" aria-hidden="true">→</span>
+        </button>
       <details id="mapSecondaryFilters" class="map-secondary-filters">
-        <summary>Filtros secundarios</summary>
+        <summary class="filter-icon" aria-label="Mostrar u ocultar filtros del mapa" title="Filtros del mapa"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg></summary>
         <div class="map-secondary-panel">
           <button type="button" class="iconbtn ghost" data-history-toggle="mapa" aria-pressed="false">
             Ver entregados de los últimos 7 días <span class="status-count" data-history-count="mapa">0</span>
           </button>
         </div>
       </details>
+      </div>
       <div class="history-indicator" data-history-indicator="mapa" hidden>
         <strong>Viendo: Entregados · últimos 7 días</strong>
         <button type="button" class="iconbtn ghost" data-history-exit="mapa">Salir</button>

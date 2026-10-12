@@ -340,7 +340,8 @@ function resizeRepartidorMap() {
   if (center) map.setCenter(center);
 }
 
-async function renderMap(){
+async function renderMap(options = {}){
+  const preserveViewport = options.preserveViewport === true && !!map;
   try {
     const config = await loadRepartidorGoogleMaps();
     if (googleMapsAuthorizationFailed) return;
@@ -385,7 +386,7 @@ async function renderMap(){
     mapMarkers.push(marker);
     bounds.push({ lat, lng });
   });
-  if(bounds.length) {
+  if(bounds.length && !preserveViewport) {
     const googleBounds = new google.maps.LatLngBounds();
     bounds.forEach(point => googleBounds.extend(point));
     google.maps.event.addListenerOnce(map, 'idle', () => { if (map.getZoom() > 16) map.setZoom(16); });
