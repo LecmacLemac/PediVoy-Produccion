@@ -97,6 +97,22 @@ export function registerLandingRoutes(app, deps) {
 
   async function serveDetectedPage(req, res) {
     try {
+      // Public homepage aliases only: never use domain headers as API tenant authority.
+      // Ignore forwarded headers and match only these explicit public domains.
+      const homepageHost = String(req.get('host') || '').toLowerCase().replace(/:\d+$/, '');
+      const homepageSlug = {
+        'pedivoy.com': 'pedivoy',
+        'www.pedivoy.com': 'pedivoy',
+        'aguahidro.com': 'aguahidro',
+        'www.aguahidro.com': 'aguahidro',
+      };
+      if (req.path === '/'
+        && Object.hasOwn(homepageSlug, homepageHost)
+        && req.query?.slug === undefined
+        && req.query?.empresa_id === undefined) {
+        return res.redirect(302, `/landing/${homepageSlug[homepageHost]}`);
+      }
+
       const customPage = await resolvePagePath(req);
       if (customPage) return res.sendFile(customPage);
       if (req.query?.slug !== undefined || req.query?.empresa_id !== undefined) return res.sendStatus(404);
