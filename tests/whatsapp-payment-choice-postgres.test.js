@@ -52,7 +52,7 @@ async function withDatabase(work) {
         empresa_id integer NOT NULL REFERENCES empresas(id),
         punto_entrega_id integer REFERENCES puntos_entrega(id),
         estado text NOT NULL DEFAULT 'pendiente',
-        metodo_pago text,
+        metodo_pago text DEFAULT 'efectivo',
         monto numeric(10,2) DEFAULT 0
       );
       CREATE TABLE empresa_cuentas_bancarias (
@@ -90,6 +90,33 @@ async function withDatabase(work) {
 after(() => {
   assert.deepEqual(readdirSync(process.cwd()).filter(name => name.startsWith(prefix)), []);
   assert.equal(created.size, 0);
+});
+
+test('schema fresco deja metodo_pago sin default efectivo', () => {
+  const createPedidosStart = initSql.indexOf('CREATE TABLE IF NOT EXISTS pedidos');
+  const createPedidosEnd = initSql.indexOf(');', createPedidosStart);
+  assert.ok(createPedidosStart >= 0 && createPedidosEnd > createPedidosStart);
+  const createPedidos = initSql.slice(createPedidosStart, createPedidosEnd);
+  assert.match(createPedidos, /metodo_pago\s+TEXT\s*,/);
+  assert.doesNotMatch(createPedidos, /metodo_pago\s+TEXT\s+DEFAULT\s+'efectivo'/i);
+});
+
+test('migración idempotente elimina default legado y pedidos omitidos quedan pendientes', async () => {
+  await withDatabase(async pool => {
+    const defaultRow = (await pool.query(`
+      SELECT column_default
+        FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'pedidos'
+         AND column_name = 'metodo_pago'
+    `)).rows[0];
+    assert.equal(defaultRow.column_default, null);
+    await pool.query(`INSERT INTO empresas(id,nombre) VALUES (9,'Tenant Nuevo')`);
+    await pool.query(`INSERT INTO pedidos(id,empresa_id,estado) VALUES (909,9,'pendiente')`);
+    assert.equal((await pool.query('SELECT metodo_pago FROM pedidos WHERE id=909')).rows[0].metodo_pago, null);
+    await pool.query(`INSERT INTO pedidos(id,empresa_id,estado,metodo_pago) VALUES (910,9,'pendiente','efectivo')`);
+    assert.equal((await pool.query('SELECT metodo_pago FROM pedidos WHERE id=910')).rows[0].metodo_pago, 'efectivo');
+  });
 });
 
 async function seed(pool) {
@@ -226,6 +253,146 @@ test('transferencia usa productor canónico y crea un único outbox Cloud dentro
     assert.equal(rows[0].status, 'pending');
     assert.equal(rows[0].cloud_template_parameters.alias, 'tenant.uno');
   });
+});
+
+test('si la configuración deja de ser Cloud conserva transferencia y jamás encola fallback Web', async () => {
+  await withDatabase(async pool => {
+    await seed(pool);
+    await pool.query(`UPDATE empresas
+      SET config_integraciones = '{"whatsapp":{"provider":"web","enabled":true}}'::jsonb
+      WHERE id = 1`);
+    const processor = createWhatsAppPaymentChoiceProcessor({ pool });
+    const result = await choose(processor, {
+      messageId: 'wamid.choice-transfer-config-changed',
+      buttonPayload: 'pedivoy_payment_transfer_v1',
+    });
+    assert.equal(result.outcome, 'accepted');
+    assert.equal(result.paymentMethod, 'transferencia');
+    assert.equal(result.notification, 'unavailable');
+    assert.equal((await pool.query('SELECT metodo_pago FROM pedidos WHERE id=101')).rows[0].metodo_pago, 'transferencia');
+    assert.equal(Number((await pool.query(`SELECT count(*) AS count FROM wpp_outbox
+      WHERE notification_correlation_id='transfer_payment:101'`)).rows[0].count), 0);
+    assert.equal(Number((await pool.query(`SELECT count(*) AS count FROM wpp_outbox
+      WHERE empresa_id=1 AND transport_origin='company'`)).rows[0].count), 0);
+    assert.equal((await pool.query(`SELECT notification_status FROM pedido_metodo_pago_eventos
+      WHERE pedido_id=101`)).rows[0].notification_status, 'unavailable');
+  });
+});
+
+test('si Cloud cambia a Web entre la lectura y el enqueue conserva elección sin fallback company', async () => {
+  await withDatabase(async pool => {
+    await seed(pool);
+    let configChanged = false;
+    const racingPool = {
+      async connect() {
+        const client = await pool.connect();
+        const query = client.query.bind(client);
+        client.query = async (...args) => {
+          const result = await query(...args);
+          const request = args[0];
+          const text = typeof request === 'string' ? request : request.text;
+          if (!configChanged && /FROM empresa_cuentas_bancarias/.test(text)) {
+            await pool.query(`UPDATE empresas
+              SET config_integraciones = '{"whatsapp":{"provider":"web","enabled":true}}'::jsonb
+              WHERE id = 1`);
+            configChanged = true;
+          }
+          return result;
+        };
+        return client;
+      },
+    };
+    const processor = createWhatsAppPaymentChoiceProcessor({ pool: racingPool });
+    const result = await choose(processor, {
+      messageId: 'wamid.choice-transfer-config-race',
+      buttonPayload: 'pedivoy_payment_transfer_v1',
+    });
+    assert.equal(configChanged, true);
+    assert.equal(result.outcome, 'accepted');
+    assert.equal(result.notification, 'unavailable');
+    assert.equal((await pool.query('SELECT metodo_pago FROM pedidos WHERE id=101')).rows[0].metodo_pago, 'transferencia');
+    assert.equal(Number((await pool.query(`SELECT count(*) AS count FROM wpp_outbox
+      WHERE notification_correlation_id='transfer_payment:101'`)).rows[0].count), 0);
+    assert.equal(Number((await pool.query(`SELECT count(*) AS count FROM wpp_outbox
+      WHERE empresa_id=1 AND transport_origin='company'`)).rows[0].count), 0);
+  });
+});
+
+test('si desaparece el mapping Cloud antes del enqueue conserva elección y queda unavailable', async () => {
+  await withDatabase(async pool => {
+    await seed(pool);
+    let mappingRemoved = false;
+    const racingPool = {
+      async connect() {
+        const client = await pool.connect();
+        const query = client.query.bind(client);
+        client.query = async (...args) => {
+          const result = await query(...args);
+          const request = args[0];
+          const text = typeof request === 'string' ? request : request.text;
+          if (!mappingRemoved && /FROM empresa_cuentas_bancarias/.test(text)) {
+            await pool.query(`UPDATE empresas
+              SET config_integraciones = '{"whatsapp":{"provider":"cloud","enabled":true,"phone_number_id":"phone-1","access_token_encrypted":"v1:test","templates":{"order_confirmation":{"name":"pedivoy_order_confirmation_v2","language":"es_AR"}}}}'::jsonb
+              WHERE id = 1`);
+            mappingRemoved = true;
+          }
+          return result;
+        };
+        return client;
+      },
+    };
+    const processor = createWhatsAppPaymentChoiceProcessor({ pool: racingPool });
+    const result = await choose(processor, {
+      messageId: 'wamid.choice-transfer-mapping-race',
+      buttonPayload: 'pedivoy_payment_transfer_v1',
+    });
+    assert.equal(mappingRemoved, true);
+    assert.equal(result.outcome, 'accepted');
+    assert.equal(result.notification, 'unavailable');
+    assert.equal((await pool.query('SELECT metodo_pago FROM pedidos WHERE id=101')).rows[0].metodo_pago, 'transferencia');
+    assert.equal(Number((await pool.query(`SELECT count(*) AS count FROM wpp_outbox
+      WHERE notification_correlation_id='transfer_payment:101'`)).rows[0].count), 0);
+  });
+});
+
+test('config Cloud malformada durante enqueue conserva elección y queda unavailable', async () => {
+  for (const [suffix, configSql] of [
+    ['integrations-null', `'null'::jsonb`],
+    ['whatsapp-null', `'{"whatsapp":null}'::jsonb`],
+  ]) {
+    await withDatabase(async pool => {
+      await seed(pool);
+      let configChanged = false;
+      const racingPool = {
+        async connect() {
+          const client = await pool.connect();
+          const query = client.query.bind(client);
+          client.query = async (...args) => {
+            const result = await query(...args);
+            const request = args[0];
+            const text = typeof request === 'string' ? request : request.text;
+            if (!configChanged && /FROM empresa_cuentas_bancarias/.test(text)) {
+              await pool.query(`UPDATE empresas SET config_integraciones = ${configSql} WHERE id = 1`);
+              configChanged = true;
+            }
+            return result;
+          };
+          return client;
+        },
+      };
+      const processor = createWhatsAppPaymentChoiceProcessor({ pool: racingPool });
+      const result = await choose(processor, {
+        messageId: `wamid.choice-transfer-${suffix}`,
+        buttonPayload: 'pedivoy_payment_transfer_v1',
+      });
+      assert.equal(configChanged, true);
+      assert.equal(result.outcome, 'accepted');
+      assert.equal(result.notification, 'unavailable');
+      assert.equal((await pool.query('SELECT metodo_pago FROM pedidos WHERE id=101')).rows[0].metodo_pago, 'transferencia');
+      assert.equal(Number((await pool.query(`SELECT count(*) AS count FROM wpp_outbox
+        WHERE notification_correlation_id='transfer_payment:101'`)).rows[0].count), 0);
+    });
+  }
 });
 
 test('sin datos bancarios conserva transferencia y registra notificación unavailable sin inventar envío', async () => {

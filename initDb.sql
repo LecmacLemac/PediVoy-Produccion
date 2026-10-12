@@ -1037,7 +1037,7 @@ CREATE TABLE IF NOT EXISTS pedidos (
   chofer_id          INTEGER REFERENCES choferes(id) ON DELETE SET NULL,
   zona_id            INTEGER REFERENCES zonas_geograficas(id) ON DELETE SET NULL,
   estado             TEXT DEFAULT 'pendiente', 
-  metodo_pago        TEXT DEFAULT 'efectivo',
+  metodo_pago        TEXT,
   monto              NUMERIC(10,2) DEFAULT 0,
   fecha              TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   fecha_entrega_estimada DATE,
@@ -6983,6 +6983,9 @@ ALTER TABLE public.pedidos
   ADD COLUMN IF NOT EXISTS metodo_pago_seleccionado_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS metodo_pago_outbound_message_id TEXT,
   ADD COLUMN IF NOT EXISTS metodo_pago_inbound_message_id TEXT;
+
+ALTER TABLE public.pedidos
+  ALTER COLUMN metodo_pago DROP DEFAULT;
 
 CREATE TABLE IF NOT EXISTS public.pedido_metodo_pago_eventos (
   id BIGSERIAL PRIMARY KEY,

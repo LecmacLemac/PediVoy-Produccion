@@ -46,6 +46,7 @@ test('webhook sanitiza button de pago y conserva provider/context IDs exactos si
   assert.deepEqual(await handler([event()]), { accepted: 1, duplicates: 0 });
   assert.equal(inserts.length, 1);
   assert.equal(inserts[0][3], VALID_INBOUND_ID);
+  assert.equal(inserts[0][5], null);
   assert.equal(inserts[0][7], 'button');
   assert.deepEqual(inserts[0][10], {
     button: { payload: 'pedivoy_payment_cash_v1' },

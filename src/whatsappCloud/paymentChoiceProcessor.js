@@ -37,9 +37,9 @@ async function defaultTransferNotifier({ client, pedidoId, empresaId }) {
     enqueueWppMessageFn: input => enqueueTransferPaymentWppMessageInTransaction(input, {
       client,
       transactionOwner: 'caller',
-    }),
+    }, { requireCloud: true }),
   });
-  return notifier(pedidoId, empresaId);
+  return notifier(pedidoId, empresaId, { requireCloud: true });
 }
 
 function notificationOutcome(result) {

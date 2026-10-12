@@ -31,6 +31,11 @@ const SAFE_NOTIFICATION_ERROR_CODES = new Set([
   'transport_origin_correlacionado_no_permitido',
 ]);
 const MAX_NOTIFICATION_ERROR_CODE_LENGTH = 64;
+const REQUIRE_CLOUD_UNAVAILABLE_CODES = new Set([
+  'cloud_config_invalida',
+  'config_integraciones_invalida',
+  'config_whatsapp_invalida',
+]);
 
 function sanitizedNotificationError(error) {
   const candidate = typeof error?.code === 'string' && error.code.length <= MAX_NOTIFICATION_ERROR_CODE_LENGTH
@@ -173,7 +178,7 @@ export function createNotificarPedidoTransferencia({
   queryFn = query,
   enqueueWppMessageFn = enqueueTransferPaymentWppMessage,
 } = {}) {
-  return async function notificarPedidoTransferenciaHandler(pedidoId, empresaId) {
+  return async function notificarPedidoTransferenciaHandler(pedidoId, empresaId, { requireCloud = false } = {}) {
     try {
       const rows = await queryFn(
       `
@@ -261,6 +266,9 @@ export function createNotificarPedidoTransferencia({
 
       let cloudActive = false;
       try { cloudActive = isWhatsappCloudActive(datos.config_integraciones); } catch {}
+      if (requireCloud && !cloudActive) {
+        return { queued: false, skipped: true, reason: 'transfer_notification_unavailable' };
+      }
       if (cloudActive) {
         let mappingAvailable = false;
         try {
@@ -281,6 +289,9 @@ export function createNotificarPedidoTransferencia({
       });
 
     } catch (e) {
+      if (requireCloud && REQUIRE_CLOUD_UNAVAILABLE_CODES.has(e?.code)) {
+        return { queued: false, skipped: true, reason: 'transfer_notification_unavailable' };
+      }
       const error = sanitizedNotificationError(e);
       console.error('Error enviando notificación de pago por transferencia:', error.code);
       throw error;

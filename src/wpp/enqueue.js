@@ -1,5 +1,6 @@
 import {
   UTILITY_TEMPLATE_FIELDS,
+  validateTemplateMapping,
   validateUtilityTemplateIntent,
 } from '../whatsappCloud/utilityTemplates.js';
 import { createHash } from 'node:crypto';
@@ -127,6 +128,7 @@ function prepareEnqueue({
   ...extra
 }, {
   correlatedTransportOrigin = null,
+  requiredTransportOrigin = null,
   correlationId = null,
   notificationCorrelationId = null,
   requireNotificationCorrelation = false,
@@ -173,6 +175,7 @@ function prepareEnqueue({
     windowMinutes,
     normalizedEmpresaId,
     correlatedTransportOrigin,
+    requiredTransportOrigin,
     correlationId: normalizedCorrelationId,
     notificationCorrelationId: normalizedNotificationCorrelationId,
   };
@@ -184,13 +187,16 @@ async function enqueuePreparedWithClient({
   windowMinutes,
   normalizedEmpresaId,
   correlatedTransportOrigin = null,
+  requiredTransportOrigin = null,
   correlationId = null,
   notificationCorrelationId = null,
   requiredUtilityTemplateKey = null,
   requiredUtilityTemplateCapability = null,
+  requireCurrentTemplateMapping = false,
 }, client) {
-  let transportOrigin = correlatedTransportOrigin || 'general';
-  if (normalizedEmpresaId !== null && correlatedTransportOrigin !== 'general') {
+  const requestedTransportOrigin = correlatedTransportOrigin || requiredTransportOrigin;
+  let transportOrigin = requestedTransportOrigin || 'general';
+  if (normalizedEmpresaId !== null && requestedTransportOrigin !== 'general') {
     await clientRows(
       client,
       'SELECT pg_advisory_xact_lock($1::integer, $2::integer) AS locked',
@@ -203,10 +209,19 @@ async function enqueuePreparedWithClient({
     );
     if (companies.length !== 1) throw new WppTransportConfigError('empresa_no_encontrada');
     const cloudActive = isWhatsappCloudActive(companies[0].config_integraciones);
-    if (correlatedTransportOrigin === 'cloud' && !cloudActive) {
+    if (requestedTransportOrigin === 'cloud' && !cloudActive) {
       throw new WppTransportConfigError('cloud_config_invalida');
     }
-    transportOrigin = correlatedTransportOrigin === 'cloud'
+    if (requireCurrentTemplateMapping) {
+      try {
+        validateTemplateMapping(
+          companies[0].config_integraciones?.whatsapp?.templates?.[requiredUtilityTemplateKey]
+        );
+      } catch {
+        throw new WppTransportConfigError('cloud_config_invalida');
+      }
+    }
+    transportOrigin = requestedTransportOrigin === 'cloud'
       ? 'cloud'
       : cloudActive ? 'cloud' : 'company';
   }
@@ -366,7 +381,12 @@ export function enqueueWppTransferPaymentNotification(input, transactionPool = d
   return enqueueRequiredUtilityNotification(input, transactionPool, 'transfer_payment');
 }
 
-async function enqueueRequiredUtilityNotificationInTransaction(input, { client, transactionOwner } = {}, requiredUtilityTemplateKey) {
+async function enqueueRequiredUtilityNotificationInTransaction(
+  input,
+  { client, transactionOwner } = {},
+  requiredUtilityTemplateKey,
+  { requireCloud = false } = {},
+) {
   if (transactionOwner !== 'caller' || !client || typeof client.query !== 'function'
       || typeof client.release !== 'function') {
     throw new WppTransportConfigError('transaction_client_requerido');
@@ -380,12 +400,14 @@ async function enqueueRequiredUtilityNotificationInTransaction(input, { client, 
     ? Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'notificationCorrelationId'))
     : input;
   const prepared = prepareEnqueue(enqueueInput, {
+    requiredTransportOrigin: requireCloud ? 'cloud' : null,
     notificationCorrelationId: parsedCorrelation.canonical,
     requireNotificationCorrelation: true,
   });
   if (prepared.skippedResult) return prepared.skippedResult;
   prepared.requiredUtilityTemplateCapability = REQUIRED_UTILITY_TEMPLATE_CAPABILITY;
   prepared.requiredUtilityTemplateKey = requiredUtilityTemplateKey;
+  prepared.requireCurrentTemplateMapping = requireCloud;
   try {
     return await enqueuePreparedWithClient(prepared, client);
   } catch (error) {
@@ -393,8 +415,8 @@ async function enqueueRequiredUtilityNotificationInTransaction(input, { client, 
   }
 }
 
-export function enqueueWppTransferPaymentNotificationInTransaction(input, transaction) {
-  return enqueueRequiredUtilityNotificationInTransaction(input, transaction, 'transfer_payment');
+export function enqueueWppTransferPaymentNotificationInTransaction(input, transaction, options) {
+  return enqueueRequiredUtilityNotificationInTransaction(input, transaction, 'transfer_payment', options);
 }
 
 export async function enqueueWppOutboxCorrelatedReply({

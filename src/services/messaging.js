@@ -56,9 +56,9 @@ export function enqueueTransferPaymentWppMessage(input, transactionPool = pool) 
   return enqueueRequiredNotification(enqueueWppTransferPaymentNotification, 'transfer_payment', input, transactionPool);
 }
 
-export function enqueueTransferPaymentWppMessageInTransaction(input, transaction) {
+export function enqueueTransferPaymentWppMessageInTransaction(input, transaction, options) {
   return enqueueRequiredNotification(
-    (enqueueInput) => enqueueWppTransferPaymentNotificationInTransaction(enqueueInput, transaction),
+    (enqueueInput) => enqueueWppTransferPaymentNotificationInTransaction(enqueueInput, transaction, options),
     'transfer_payment',
     input,
     null,

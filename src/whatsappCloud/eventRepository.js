@@ -27,6 +27,7 @@ const PAYMENT_BUTTON_PAYLOADS = new Set([
 
 function sanitizeMessage(message) {
   const type = requireNonEmptyString(message?.type, 'message type');
+  const senderId = requireWaId(message?.from);
   const content = {};
   if (type === 'text') {
     if (typeof message?.text?.body !== 'string') {
@@ -55,7 +56,7 @@ function sanitizeMessage(message) {
   }
   return {
     messageId: requireMetaWamid(message?.id, 'message id'),
-    senderId: requireWaId(message?.from),
+    senderId: type === 'button' ? null : senderId,
     recipientId: null,
     messageType: type,
     status: null,

@@ -527,6 +527,13 @@ function getFilteredPedidos() {
   return list;
 }
 
+function formatPaymentChoiceSelectedAt(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
 function renderCards() {
   let list = getFilteredPedidos();
   const today = getOyString();
@@ -555,7 +562,8 @@ function renderCards() {
     } else if (met === 'cuenta_corriente') {
       paymentStatusText = 'Cuenta corriente — elegida por el repartidor';
     }
-    const paymentStatusHtml = `<div class="payment-choice-status ${met || 'pending'}" role="status">${esc(paymentStatusText)}</div>`;
+    const paymentSelectedAtText = formatPaymentChoiceSelectedAt(p.metodo_pago_seleccionado_at);
+    const paymentStatusHtml = `<div class="payment-choice-status ${met || 'pending'}" role="status">${esc(paymentStatusText)}${paymentSelectedAtText ? ` <span class="payment-choice-date">Elegida el ${esc(paymentSelectedAtText)}</span>` : ''}</div>`;
     const verifiedPaymentHtml = met === 'transferencia' && isVerif
       ? '<span class="verified-badge">✓ Transferencia verificada</span>'
       : '';

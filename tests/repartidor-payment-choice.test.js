@@ -110,6 +110,54 @@ test('UI distingue pendiente, elección cliente/manual y transferencia verificad
   assert.match(html, /\.pay-opt:focus-visible/);
 });
 
+test('UI renderiza fecha legible de selección y no inventa fecha cuando es NULL', () => {
+  const cardsContainer = { innerHTML: '' };
+  const emptyMsg = { hidden: false };
+  const selectedAt = '2026-10-10T15:34:00.000Z';
+  const context = vm.createContext({
+    getFilteredPedidos: () => [{
+      id: 42,
+      estado: 'en_ruta',
+      metodo_pago: 'transferencia',
+      metodo_pago_origen: 'cliente_whatsapp',
+      metodo_pago_seleccionado_at: selectedAt,
+      cliente: 'Ana <Cliente>',
+      direccion: 'Calle 1',
+      monto: 1500,
+      items: [],
+    }],
+    renderCargaPendiente() {},
+    verificadas: new Set(),
+    pagosCanales: { efectivo: true, transferencia: true },
+    getOyString: () => '2026-10-10',
+    getPedidoFechaOperativa: () => '2026-10-10',
+    formatFechaPlanificada: () => '',
+    renderRetornablesPendientes: () => '',
+    formatFechaAR: () => '',
+    money: value => `$${value}`,
+    esc: value => String(value).replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
+    $: selector => selector === '#cardsContainer' ? cardsContainer : emptyMsg,
+    Number,
+    String,
+    Array,
+    Date,
+  });
+  vm.runInContext(pedidosSource.slice(pedidosSource.indexOf('function formatPaymentChoiceSelectedAt(')), context);
+  context.renderCards();
+  assert.match(cardsContainer.innerHTML, /Elegida el /);
+  assert.match(cardsContainer.innerHTML, /elegida por el cliente <span class="payment-choice-date">/);
+  assert.doesNotMatch(cardsContainer.innerHTML, new RegExp(selectedAt));
+  assert.match(cardsContainer.innerHTML, /Ana &lt;Cliente&gt;/);
+
+  context.getFilteredPedidos = () => [{
+    id: 43, estado: 'en_ruta', metodo_pago: null, metodo_pago_origen: null,
+    metodo_pago_seleccionado_at: null, cliente: 'Beto', direccion: 'Calle 2', monto: 900, items: [],
+  }];
+  context.renderCards();
+  assert.match(cardsContainer.innerHTML, /Forma de pago pendiente/);
+  assert.doesNotMatch(cardsContainer.innerHTML, /Elegida el /);
+});
+
 test('UI exige confirmación explícita antes de cambiar selección cliente y envía flag server-side', async () => {
   const apiCalls = [];
   let confirmations = 0;
