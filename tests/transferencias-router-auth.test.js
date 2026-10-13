@@ -471,3 +471,42 @@ test('solicitar comprobante devuelve 503 outcome_unknown sanitizado sin retry de
     await cleanup();
   }
 });
+
+test('solicitar comprobante no informa éxito cuando la notificación no fue encolada', async () => {
+  const { app, cleanup } = await buildApp({
+    queryOverride: async (sql) => {
+      if (/ALTER TABLE|CREATE INDEX/i.test(sql)) return [];
+      if (sql.includes('FROM pedidos p')) return [{
+        id: 42,
+        empresa_id: 3,
+        metodo_pago: 'transferencia',
+        telefono: '3539999999',
+      }];
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    notifyTransferFn: async () => ({
+      queued: false,
+      skipped: true,
+      reason: 'transfer_notification_unavailable',
+    }),
+  });
+  try {
+    await withServer(app, async baseUrl => {
+      const response = await fetch(`${baseUrl}/api/transferencias/pedidos/42/solicitar-comprobante`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenFor({ uid: 10, role: 'admin', empresa_id: 3 })}`,
+          'x-test-license': 'active',
+        },
+      });
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), {
+        ok: false,
+        code: 'transfer_notification_unavailable',
+        error: 'La solicitud no fue enviada porque WhatsApp no está disponible o está incompleto',
+      });
+    });
+  } finally {
+    await cleanup();
+  }
+});

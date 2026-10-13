@@ -601,8 +601,22 @@ export function createTransferenciasRouter({
         return res.status(409).json({ error: 'El cliente no tiene WhatsApp cargado' });
       }
 
-      await notifyTransfer(pedidoId, Number(pedido.empresa_id));
-      return res.json({ ok: true });
+      const notification = await notifyTransfer(pedidoId, Number(pedido.empresa_id));
+      const accepted = notification?.queued === true
+        || (notification?.queued === false
+          && notification?.skipped === true
+          && notification?.reason === 'duplicate_notification');
+      if (!accepted) {
+        return res.status(503).json({
+          ok: false,
+          code: 'transfer_notification_unavailable',
+          error: 'La solicitud no fue enviada porque WhatsApp no está disponible o está incompleto',
+        });
+      }
+      return res.json({
+        ok: true,
+        status: notification.queued === true ? 'queued' : 'already_queued',
+      });
     } catch (e) {
       if (e?.code === 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN') {
         console.error('Error solicitando comprobante de transferencia:', e.code);
