@@ -6,7 +6,6 @@
   <title>Seguimiento de Pedido</title>
   <link rel="stylesheet" href="theme-base.css" />
   
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
 
   <style>
@@ -14,6 +13,10 @@
     body { margin: 0; font-family: system-ui, -apple-system, sans-serif; overflow: hidden; background: #f3f4f6; }
     
     #map { height: 100vh; width: 100%; z-index: 0; }
+    #lblCliente { color: #111827; }
+    #map .pin-driver { color: #2563eb; }
+    #map .pin-dest { color: #10b981; }
+    #googleMapError[hidden] { display:none; }
 
     /* Tarjeta Flotante Inferior */
     .hud-card {
@@ -298,6 +301,7 @@
   </div>
 
   <div id="map" aria-label="Mapa del seguimiento del pedido"></div>
+  <div id="googleMapError" class="empty-map-note" role="alert" hidden style="top:116px;border-radius:14px"></div>
   <div id="mapNote" class="empty-map-note" style="display:none;">El mapa en vivo se activa cuando el repartidor sale a ruta.</div>
 
   <div class="hud-card" id="hudCard" aria-live="polite">
@@ -342,7 +346,7 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/pedidos/seguimiento-google-map.js"></script>
   <style> @keyframes spin { 100% { transform: rotate(360deg); } } 
 
     @media (max-width: 768px) {
@@ -697,21 +701,6 @@
     }
   }
 
-  // 2. Inicializar Mapa
-  function initMap() {
-    map = L.map('map', { zoomControl: false }).setView([-38.4161, -63.6167], 4);
-
-    L.tileLayer(
-      'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-      {
-        maxZoom: 19,
-        attribution: '&copy; OpenStreetMap &copy; CartoDB'
-      }
-    ).addTo(map);
-
-    L.control.zoom({ position: 'topright' }).addTo(map);
-  }
-
   // 3. Iconos personalizados
   function createIcon(kind) {
     const div = document.createElement('div');
@@ -721,11 +710,7 @@
         ? '<i class="ri-motorbike-fill"></i>'
         : '<i class="ri-map-pin-2-fill"></i>';
 
-    return L.divIcon({
-      html: div,
-      iconSize: [44, 44],
-      className: '' // importante: vaciar className para que Leaflet no meta estilos extra
-    });
+    return div;
   }
 
   function clearPollTimer() {
@@ -750,8 +735,12 @@
     loadingIcon.className = spinning ? 'ri-loader-4-line' : 'ri-error-warning-line';
     loadingIcon.style.animation = spinning ? 'spin 1s linear infinite' : 'none';
     if (driverMarker) {
-      map.removeLayer(driverMarker);
+      driverMarker.map = null;
       driverMarker = null;
+    }
+    if (trajectoryLine) {
+      trajectoryLine.setMap(null);
+      trajectoryLine = null;
     }
   }
 
@@ -816,7 +805,7 @@
     }
 
     setTimeout(() => {
-      if (map) map.invalidateSize({ animate: false });
+      resizeSeguimientoMap();
     }, 320);
   }
 
@@ -834,23 +823,21 @@
   function renderTrajectoryLine({ hasDestination, hasDriverLocation, driverLat, driverLng, destLat, destLng }) {
     if (!hasDestination || !hasDriverLocation) {
       if (trajectoryLine) {
-        map.removeLayer(trajectoryLine);
+        trajectoryLine.setMap(null);
         trajectoryLine = null;
       }
       return;
     }
 
-    const points = [[driverLat, driverLng], [destLat, destLng]];
+    if (!map || seguimientoGoogleAuthFailed) return;
+    const points = [{ lat: driverLat, lng: driverLng }, { lat: destLat, lng: destLng }];
     if (!trajectoryLine) {
-      trajectoryLine = L.polyline(points, {
-        color: '#2563eb',
-        weight: 4,
-        opacity: 0.72,
-        dashArray: '8 10',
-        lineCap: 'round'
-      }).addTo(map);
+      trajectoryLine = new google.maps.Polyline({
+        map, path: points, strokeColor: '#2563eb', strokeOpacity: 0,
+        icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: .72, scale: 3 }, offset: '0', repeat: '20px' }]
+      });
     } else {
-      trajectoryLine.setLatLngs(points);
+      trajectoryLine.setPath(points);
     }
   }
 
@@ -897,6 +884,8 @@
       consecutiveErrors = 0;
       renderData(data);
       hideLoading();
+      await initMap();
+      renderData(data);
 
       const state = String(data?.pedido?.estado || '').toLowerCase();
       if (['entregado', 'cancelado'].includes(state)) {
@@ -989,6 +978,8 @@
       driverRow.style.display = 'none';
     }
 
+    if (!map || seguimientoGoogleAuthFailed) return;
+
     // --- Marcador de destino ---
     const hasDestination = hasUsableCoordinates(pedido.dest_lat, pedido.dest_lng);
     let destLat = null;
@@ -998,17 +989,18 @@
       destLng = Number(pedido.dest_lng);
 
       if (!destMarker) {
-        destMarker = L.marker([destLat, destLng], { icon: createIcon('dest') }).addTo(map);
+        destMarker = new google.maps.marker.AdvancedMarkerElement({ map, position: { lat: destLat, lng: destLng }, content: createIcon('dest'), title: 'Destino de entrega' });
       } else {
-        destMarker.setLatLng([destLat, destLng]);
+        destMarker.position = { lat: destLat, lng: destLng };
       }
 
       if (firstZoom && !shouldUseDriverLocation(driverLocation)) {
-        map.setView([destLat, destLng], 15);
+        map.setCenter({ lat: destLat, lng: destLng });
+        map.setZoom(15);
         firstZoom = false;
       }
     } else if (destMarker) {
-      map.removeLayer(destMarker);
+      destMarker.map = null;
       destMarker = null;
     }
 
@@ -1022,17 +1014,18 @@
       driverLng = Number(driverLocation.longitud);
 
       if (!driverMarker) {
-        driverMarker = L.marker([driverLat, driverLng], { icon: createIcon('driver') }).addTo(map);
+        driverMarker = new google.maps.marker.AdvancedMarkerElement({ map, position: { lat: driverLat, lng: driverLng }, content: createIcon('driver'), title: 'Repartidor' });
       } else {
-        driverMarker.setLatLng([driverLat, driverLng]);
+        driverMarker.position = { lat: driverLat, lng: driverLng };
       }
 
       if (firstZoom) {
-        map.setView([driverLat, driverLng], destMarker ? 16 : 15);
+        map.setCenter({ lat: driverLat, lng: driverLng });
+        map.setZoom(destMarker ? 16 : 15);
         firstZoom = false;
       }
     } else if (driverMarker) {
-      map.removeLayer(driverMarker);
+      driverMarker.map = null;
       driverMarker = null;
     }
 
@@ -1061,7 +1054,6 @@
   };
 
   // 6. Init
-  initMap();
   orderSummary.addEventListener('click', (ev) => {
     const toggle = ev.target.closest('[data-action="toggle-items"]');
     if (!toggle) return;

@@ -41,7 +41,7 @@ export function buildPublicLocationFreshness(timestamp, nowMs = Date.now()) {
   };
 }
 
-export function createTrackingPublicRouter({ queryFn = query } = {}) {
+export function createTrackingPublicRouter({ queryFn = query, mapsBrowserEnv = process.env } = {}) {
   const router = express.Router();
 
 // --------------------------------------------------
@@ -186,6 +186,15 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
       if (Number.isFinite(ageMs) && ageMs > ttlHours * 60 * 60 * 1000) {
         return res.status(404).json({ error: 'Pedido no encontrado' });
       }
+    }
+
+    // Map configuration uses the same validated order capability and TTL above.
+    // Never expose server geocoding credentials or read locations for this request.
+    if (req.query.map_config === '1') {
+      res.set('Cache-Control', 'no-store');
+      const apiKey = String(mapsBrowserEnv.GOOGLE_MAPS_BROWSER_API_KEY || '').trim();
+      if (!apiKey) return res.status(503).json({ error: 'Google Maps no está configurado.' });
+      return res.json({ apiKey, mapId: String(mapsBrowserEnv.GOOGLE_MAPS_MAP_ID || '').trim() || 'DEMO_MAP_ID' });
     }
 
     // 4. Buscar ubicación del chofer
