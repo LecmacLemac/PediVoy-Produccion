@@ -7,6 +7,7 @@ import {
   verifiesInternalReceiptValidationProof,
 } from '../receiptMediaValidation.js';
 import { normalizeCloudDeadline } from './deadlines.js';
+import { validateMetaWamid } from './messageId.js';
 import { normalizeWhatsAppWaId } from './waId.js';
 
 function configError() {
@@ -45,8 +46,8 @@ export function createWhatsAppCloudReceiptProcessor({
   const validationTimeoutMs = normalizeCloudDeadline('graph', mediaValidationTimeoutMs);
 
   async function prepare({
-    empresaId, messageId, senderId, messageType, media, tenant, originalPhoneNumberId,
-    assertLease = async () => {},
+    empresaId, messageId, contextMessageId = null, senderId, messageType, media, tenant,
+    originalPhoneNumberId, assertLease = async () => {},
   } = {}) {
     const normalizedEmpresaId = Number(empresaId);
     if (!Number.isSafeInteger(normalizedEmpresaId) || normalizedEmpresaId <= 0
@@ -54,12 +55,14 @@ export function createWhatsAppCloudReceiptProcessor({
       throw configError();
     }
     const safeMessageId = required(messageId);
+    const safeContextMessageId = contextMessageId == null ? null : validateMetaWamid(contextMessageId);
     const safeSender = normalizeWhatsAppWaId(senderId);
     const originalPhone = required(originalPhoneNumberId);
     const mediaId = required(media?.id);
     const mimeType = normalizeReceiptMimeType(media?.mime_type);
     const expectedSha256 = required(media?.sha256);
-    if (!safeMessageId || !safeSender || !originalPhone || !mediaId || !mimeType || !expectedSha256
+    if (!safeMessageId || (contextMessageId != null && !safeContextMessageId)
+        || !safeSender || !originalPhone || !mediaId || !mimeType || !expectedSha256
         || !['image', 'document'].includes(messageType)) {
       throw mediaValidationError('cloud_media_payload_invalid');
     }
@@ -109,6 +112,7 @@ export function createWhatsAppCloudReceiptProcessor({
     return {
       normalizedEmpresaId,
       safeMessageId,
+      safeContextMessageId,
       safeSender,
       mediaId,
       messageType,
@@ -124,12 +128,15 @@ export function createWhatsAppCloudReceiptProcessor({
   async function processPrepared({ prepared, assertLease = async () => {} } = {}) {
     const normalizedEmpresaId = Number(prepared?.normalizedEmpresaId);
     const safeMessageId = required(prepared?.safeMessageId);
+    const safeContextMessageId = prepared?.safeContextMessageId == null
+      ? null : validateMetaWamid(prepared.safeContextMessageId);
     const safeSender = normalizeWhatsAppWaId(prepared?.safeSender);
     const mediaId = required(prepared?.mediaId);
     const messageType = prepared?.messageType;
     const media = prepared?.media;
     const downloaded = prepared?.downloaded;
     if (!Number.isSafeInteger(normalizedEmpresaId) || normalizedEmpresaId <= 0 || !safeMessageId
+        || (prepared?.safeContextMessageId != null && !safeContextMessageId)
         || !safeSender || !mediaId || !['image', 'document'].includes(messageType)
         || !Buffer.isBuffer(downloaded?.buffer) || !required(downloaded?.metadata?.mimeType)) {
       throw Object.assign(new Error('cloud_media_prepared_invalid'), { code: 'cloud_media_prepared_invalid' });
@@ -165,6 +172,7 @@ export function createWhatsAppCloudReceiptProcessor({
       filename: required(media?.filename) || defaultFilename(mediaId, preparedMimeType),
       empresaId: normalizedEmpresaId,
       sourceMessageId: safeMessageId,
+      contextMessageId: safeContextMessageId,
       transportOrigin: 'cloud',
     }, { assertLease, enqueueReply: reply, preparedValidation: prepared.validation });
     if (result && typeof result === 'object') {

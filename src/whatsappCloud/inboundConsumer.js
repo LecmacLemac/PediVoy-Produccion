@@ -90,7 +90,7 @@ export function createWhatsAppCloudInboundConsumer({
     const text = row.event_data?.text?.body;
     const media = isReceipt ? row.event_data?.[row.message_type] : null;
     const buttonPayload = isPaymentChoice ? row.event_data?.button?.payload : null;
-    const contextMessageId = isPaymentChoice ? row.event_data?.context?.id : null;
+    const contextMessageId = (isReceipt || isPaymentChoice) ? row.event_data?.context?.id || null : null;
     if (!isReceipt && !isPaymentChoice && (typeof text !== 'string' || !text.trim())) {
       await finish({ id: row.id, owner, state: 'skipped', errorCode: 'invalid_text_message' });
       return { outcome: 'skipped', eventId: row.id, errorCode: 'invalid_text_message' };
@@ -144,7 +144,9 @@ export function createWhatsAppCloudInboundConsumer({
       let prepared = null;
       if (isReceipt && prepareReceipt) {
         try {
-          prepared = await prepareReceipt({ ...common, media, messageType: row.message_type, tenant });
+          prepared = await prepareReceipt({
+            ...common, media, messageType: row.message_type, tenant, contextMessageId,
+          });
         } catch (error) {
           if (leaseLost || error?.code === LEASE_LOST_CODE || error?.code === 'CLOUD_INBOUND_CLAIM_LOST') throw error;
           const priorRetries = boundedInteger(row.retry_count, 0, 0, 1000000);
@@ -168,7 +170,9 @@ export function createWhatsAppCloudInboundConsumer({
       await startProcessing({ id: row.id, owner, leaseMs: lease });
       processingStarted = true;
       if (isReceipt) {
-        const receiptResult = await processReceipt({ ...common, media, messageType: row.message_type, tenant, prepared });
+        const receiptResult = await processReceipt({
+          ...common, media, messageType: row.message_type, tenant, prepared, contextMessageId,
+        });
         if (receiptResult?.handled !== true) {
           throw Object.assign(new Error('cloud_receipt_outcome_unknown'), { code: 'cloud_receipt_outcome_unknown' });
         }

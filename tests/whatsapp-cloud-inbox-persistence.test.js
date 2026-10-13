@@ -84,7 +84,7 @@ function handlerFor(pool, { afterInsert } = {}) {
   });
 }
 
-function inbound({ id = 'wamid.in-1', type = 'text', from = '5493515550001', timestamp = '1760000000', phoneNumberId = 'phone-one' } = {}) {
+function inbound({ id = 'wamid.in-1', type = 'text', from = '5493515550001', timestamp = '1760000000', phoneNumberId = 'phone-one', contextId = null } = {}) {
   const normalizedType = type.trim();
   const media = normalizedType === 'image'
     ? { id: 'private-media-image', mime_type: 'image/jpeg', sha256: 'private-image-sha', caption: ' comprobante ' }
@@ -93,7 +93,12 @@ function inbound({ id = 'wamid.in-1', type = 'text', from = '5493515550001', tim
     kind: 'message', entryId: 'entry-private', phoneNumberId,
     message: {
       id, from, timestamp, type,
-      ...(normalizedType === 'text' ? { text: { body: '  hola mundo  ' } } : { [normalizedType]: media }),
+      ...(normalizedType === 'text' ? { text: { body: '  hola mundo  ' } } : {
+        [normalizedType]: media,
+        ...(contextId === null ? {} : {
+          context: { id: contextId, from: 'private-context-sender', forwarded: true },
+        }),
+      }),
       opaque_payload: 'private-payload',
     },
   };
@@ -175,6 +180,45 @@ test('inbound image/document produce exactamente una proyección allowlisted sin
       },
     ]);
     assert.doesNotMatch(JSON.stringify(rows), /private-media|private-.*-sha|5493515550001|phone-one/);
+  });
+});
+
+test('eventRepository conserva sólo context.id WAMID validado para image/document', async () => {
+  await withDatabase(async pool => {
+    await seedTenant(pool);
+    const handler = handlerFor(pool);
+    assert.deepEqual(await handler([
+      inbound({ id: 'wamid.image-context', type: 'image', contextId: 'wamid.transfer-payment-1' }),
+      inbound({ id: 'wamid.document-context', type: 'document', contextId: 'wamid.transfer-payment-2' }),
+    ]), { accepted: 2, duplicates: 0 });
+
+    const rows = (await pool.query(`
+      SELECT message_id, event_data
+        FROM whatsapp_cloud_events
+       ORDER BY message_id
+    `)).rows;
+    assert.deepEqual(rows.map(row => ({
+      message_id: row.message_id,
+      context: row.event_data.context,
+    })), [
+      { message_id: 'wamid.document-context', context: { id: 'wamid.transfer-payment-2' } },
+      { message_id: 'wamid.image-context', context: { id: 'wamid.transfer-payment-1' } },
+    ]);
+    assert.doesNotMatch(JSON.stringify(rows), /private-context-sender|forwarded/);
+  });
+});
+
+test('eventRepository rechaza context.id inválido presente en image/document', async () => {
+  await withDatabase(async pool => {
+    await seedTenant(pool);
+    const handler = handlerFor(pool);
+    for (const type of ['image', 'document']) {
+      await assert.rejects(
+        handler([inbound({ id: `wamid.invalid-context-${type}`, type, contextId: 'not-a-wamid private' })]),
+        error => error?.code === 'invalid_event',
+      );
+    }
+    assert.equal((await pool.query('SELECT count(*)::int AS total FROM whatsapp_cloud_events')).rows[0].total, 0);
   });
 });
 

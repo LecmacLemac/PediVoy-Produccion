@@ -5,7 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createWhatsAppCloudReceiptProcessor } from '../src/whatsappCloud/receiptProcessor.js';
-import { handleIncomingComprobanteFromBotPg } from '../src/transferenciasPipeline.js';
+import {
+  evaluateReceiptApproval,
+  handleIncomingComprobanteFromBotPg,
+} from '../src/transferenciasPipeline.js';
 import {
   hasValidReceiptMagicBytes,
   normalizeReceiptMimeType,
@@ -325,6 +328,7 @@ for (const scenario of [
         assert.equal(botData.replyJid, null);
         assert.equal(botData.empresaId, 2);
         assert.equal(botData.sourceMessageId, 'wamid.receipt-2');
+        assert.equal(botData.contextMessageId, 'wamid.transfer-payment-receipt-2');
         assert.equal(botData.transportOrigin, 'cloud');
         assert.deepEqual(botData.buffer, bytes);
         assert.equal(botData.filename, scenario.filename || `media-2.${scenario.mimeType === 'application/pdf' ? 'pdf' : 'jpg'}`);
@@ -338,6 +342,7 @@ for (const scenario of [
     const result = await processor.process({
       empresaId: 2,
       messageId: 'wamid.receipt-2',
+      contextMessageId: 'wamid.transfer-payment-receipt-2',
       senderId: '5493515550002',
       originalPhoneNumberId: 'phone-2',
       messageType: scenario.messageType,
@@ -400,13 +405,17 @@ test('Cloud entrega prueba interna de bytes validados y el pipeline omite sólo 
           absolutePath: '/tmp/not-created', relativePath: '/Transferencia/prepared.jpg',
           mimetype: 'image/jpeg', size: bytes.length,
         }),
-        insertarComprobantePg: async () => ({ duplicate: true }),
+        insertarComprobantePg: async input => {
+          assert.equal(input.contextMessageId, 'wamid.transfer-payment-preflight');
+          return { duplicate: true };
+        },
       },
     }),
     enqueueReply: async () => assert.fail('duplicado no responde'),
   });
   const input = {
-    empresaId: 2, messageId: 'wamid.preflight-once', senderId: '5493515550002', originalPhoneNumberId: 'phone-2',
+    empresaId: 2, messageId: 'wamid.preflight-once', contextMessageId: 'wamid.transfer-payment-preflight',
+    senderId: '5493515550002', originalPhoneNumberId: 'phone-2',
     messageType: 'image', media: { id: 'media-once', mime_type: 'image/jpeg', sha256: 'hash' }, tenant: { empresaId: 2 },
   };
 
@@ -415,6 +424,79 @@ test('Cloud entrega prueba interna de bytes validados y el pipeline omite sólo 
     ok: false, handled: true, saved: true, duplicate: true, reason: 'duplicate_event_or_file',
   });
   assert.equal(preflightCalls, 1);
+});
+
+test('asociación automática exacta o fallback nunca acredita ni aprueba por sí sola', () => {
+  for (const associationMethod of ['exact_context', 'fallback_amount_phone_recent']) {
+    const decision = evaluateReceiptApproval({
+      registroDB: {
+        pedido_id: 42,
+        empresa_id: 1,
+        pedido_monto: 2750,
+        pedido_metodo_pago: 'transferencia',
+        pedido_pago_acreditado: false,
+        file_hash: 'a'.repeat(64),
+        association_method: associationMethod,
+      },
+      monto: 2750,
+      cuentaDestinoMatch: { cuenta_bancaria_id: 9, confianza: 100 },
+      nroOperacion: 'OP-1',
+      fechaComprobante: '2026-10-13',
+      now: new Date('2026-10-13T12:00:00Z'),
+    });
+    assert.equal(decision.approved, false);
+    assert.deepEqual(decision.reasons, ['asociacion_automatica_pendiente_revision']);
+  }
+});
+
+test('pipeline ejecuta fallback por monto sólo después de IA y conserva revisión pendiente', async () => {
+  const bytes = validJpeg();
+  const validation = await validateReceiptMediaPreEffect(bytes, 'image/jpeg');
+  const events = [];
+  const result = await handleIncomingComprobanteFromBotPg({
+    type: 'image', telefono: '5493515550002', buffer: bytes, mimetype: 'image/jpeg',
+    filename: 'receipt.jpg', empresaId: 2, sourceMessageId: 'wamid.fallback-pipeline',
+    transportOrigin: 'cloud',
+  }, {
+    preparedValidation: validation,
+    assertLease: async () => {},
+    enqueueReply: async ({ effect }) => { events.push(`reply:${effect}`); return { queued: true }; },
+    deps: {
+      insertarComprobantePg: async () => ({
+        id: 91, empresa_id: 2, pedido_id: null, source_chat_jid: null, transport_origin: 'cloud',
+        file_hash: 'a'.repeat(64), association_reason: 'pedido_no_asociado',
+      }),
+      prepareImageForAI: async () => ({ base64: 'x', mimeType: 'image/jpeg' }),
+      analyzeReceiptWithAI: async () => {
+        events.push('ai');
+        return { monto: 2750, fecha: '2026-10-13', nro_operacion: 'OP-1' };
+      },
+      asociarComprobanteAutomaticamentePorMontoPg: async input => {
+        events.push('fallback');
+        assert.equal(input.id, 91);
+        assert.equal(input.empresaId, 2);
+        assert.equal(input.telefono, '5493515550002');
+        assert.equal(input.monto, 2750);
+        return {
+          outcome: 'associated', id: 91, empresa_id: 2, pedido_id: 51,
+          pedido_monto: 2750, pedido_metodo_pago: 'transferencia', pedido_pago_acreditado: false,
+          association_method: 'fallback_amount_phone_recent', association_reason: null,
+        };
+      },
+      resolverCuentaBancariaDestinoPg: async () => null,
+      aprobarComprobanteAtomicoPg: async () => assert.fail('la asociación automática no acredita'),
+      transicionarComprobanteARevisionPg: async ({ patch }) => {
+        events.push('pending');
+        assert.match(patch.riesgo_flags, /asociacion_automatica_pendiente_revision/);
+        return { outcome: 'transitioned' };
+      },
+    },
+  });
+
+  assert.equal(result.pedido_id, 51);
+  assert.equal(result.reason, 'manual_review');
+  assert.ok(events.indexOf('ai') < events.indexOf('fallback'));
+  assert.deepEqual(events, ['reply:received', 'ai', 'fallback', 'pending', 'reply:pending']);
 });
 
 test('receiptProcessor rechaza senderId no decimal como defensa en profundidad', async () => {

@@ -20,6 +20,7 @@ import {
 } from './receiptMediaValidation.js';
 import {
   insertarComprobantePg,
+  asociarComprobanteAutomaticamentePorMontoPg,
   actualizarComprobanteDatosPg,
   aprobarComprobanteAtomicoPg,
   transicionarComprobanteARevisionPg,
@@ -274,7 +275,11 @@ export function evaluateReceiptApproval({
   const orderAmount = Number(registroDB?.pedido_monto);
 
   if (!registroDB?.pedido_id || !registroDB?.empresa_id || !Number.isFinite(orderAmount) || orderAmount <= 0) {
-    reasons.push('pedido_no_asociado');
+    reasons.push(registroDB?.association_reason === 'pedido_ambiguo'
+      ? 'pedido_ambiguo' : 'pedido_no_asociado');
+  }
+  if (['exact_context', 'fallback_amount_phone_recent'].includes(registroDB?.association_method)) {
+    reasons.push('asociacion_automatica_pendiente_revision');
   }
   if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
     reasons.push('monto_ia_invalido');
@@ -655,8 +660,8 @@ async function analyzeReceiptWithAI(imagePayload, {
 
 // --- PIPELINE PRINCIPAL ---
 export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
-  empresaId: canalEmpresaId = null, sourceMessageId = null, replyJid = null,
-  transportOrigin = null, deps = {}, assertLease = async () => {}, enqueueReply = null,
+  empresaId: canalEmpresaId = null, sourceMessageId = null, contextMessageId = null,
+  replyJid = null, transportOrigin = null, deps = {}, assertLease = async () => {}, enqueueReply = null,
   preparedValidation = null,
   sanitizeErrors = transportOrigin === 'cloud',
 } = {}) {
@@ -669,6 +674,7 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
   const services = {
     saveFileToDisk,
     insertarComprobantePg,
+    asociarComprobanteAutomaticamentePorMontoPg,
     enqueueCorrelatedWppMessagePg,
     enqueueWppMessagePg,
     actualizarComprobanteDatosPg,
@@ -706,6 +712,7 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
       mimetype: savedFile.mimetype,
       bytes: savedFile.size,
       sourceMessageId,
+      contextMessageId,
       fileHash,
       archivoBinario: transportOrigin === 'cloud' ? filePayload.buffer : null,
     });
@@ -784,6 +791,24 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
       };
     }
 
+    if (!registroDB?.pedido_id && empresaId && transportOrigin === 'cloud') {
+      await assertLease();
+      const fallbackAssociation = await services.asociarComprobanteAutomaticamentePorMontoPg({
+        id: registroDB.id,
+        empresaId,
+        telefono,
+        monto: parseMoney(datosIA.monto),
+      });
+      if (fallbackAssociation?.outcome === 'associated') {
+        registroDB = { ...registroDB, ...fallbackAssociation };
+      } else if (fallbackAssociation?.association_reason) {
+        registroDB = {
+          ...registroDB,
+          association_reason: fallbackAssociation.association_reason,
+        };
+      }
+    }
+
     const result = await finalizeReceiptValidation({
       registroDB, datosIA, telefono, replyJid, transportOrigin, deps,
       assertLease, enqueueReply,
@@ -838,7 +863,7 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
 export async function handleIncomingComprobanteFromBotPg(botData, options = {}) {
   const {
     type, telefono, replyJid = null, buffer, base64, mimetype, filename, empresaId = null,
-    sourceMessageId = null, transportOrigin = null,
+    sourceMessageId = null, contextMessageId = null, transportOrigin = null,
   } = botData;
 
   // Filtro básico
@@ -891,7 +916,8 @@ export async function handleIncomingComprobanteFromBotPg(botData, options = {}) 
     },
     telefono,
     {
-      empresaId, sourceMessageId, replyJid, transportOrigin, deps: options.deps || {},
+      empresaId, sourceMessageId, contextMessageId, replyJid, transportOrigin,
+      deps: options.deps || {},
       assertLease: options.assertLease, enqueueReply: options.enqueueReply,
       preparedValidation: validation === true ? null : validation,
     }

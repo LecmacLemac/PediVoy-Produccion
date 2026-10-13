@@ -3,6 +3,8 @@ import { pool, query, withTransaction as dbWithTransaction } from './db.js';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { enqueueWppOutbox, enqueueWppOutboxCorrelatedReply } from './wpp/enqueue.js';
+import { parseProactiveNotificationCorrelationId } from './wpp/proactiveCorrelation.js';
+import { validateMetaWamid } from './whatsappCloud/messageId.js';
 
 const MIGRATION_START = '-- BEGIN COMPROBANTE CONCURRENCY MIGRATION';
 const MIGRATION_END = '-- END COMPROBANTE CONCURRENCY MIGRATION';
@@ -676,6 +678,109 @@ export async function aprobarComprobanteManualAtomicoPg(
   }
 }
 
+export async function asociarComprobanteAutomaticamentePorMontoPg(
+  { id, empresaId, telefono, monto, windowHours = process.env.TRANSFERENCIA_ASSOCIATION_WINDOW_HOURS },
+  { withTransaction = dbWithTransaction } = {},
+) {
+  const comprobanteId = Number(id);
+  const tenantId = Number(empresaId);
+  const normalizedPhone = digitsOnly(telefono).slice(-10);
+  const exactAmount = Number(monto);
+  const configuredWindow = Number(windowHours);
+  // Ventana operativa conservadora: 72 horas por defecto, configurable entre 1 y 168.
+  const recentWindowHours = Number.isSafeInteger(configuredWindow)
+    && configuredWindow >= 1 && configuredWindow <= 168 ? configuredWindow : 72;
+  if (!Number.isSafeInteger(comprobanteId) || comprobanteId <= 0
+      || !Number.isSafeInteger(tenantId) || tenantId <= 0
+      || normalizedPhone.length < 6 || !Number.isFinite(exactAmount) || exactAmount <= 0) {
+    return { outcome: 'invalid_input', pedido_id: null, association_reason: 'pedido_no_asociado' };
+  }
+
+  return withTransaction(async txQuery => {
+    const receipt = (await txQuery(`
+      SELECT id, empresa_id, pedido_id, estado_revision, validado, procesado
+        FROM comprobantes_transferencia
+       WHERE id = $1 AND empresa_id = $2
+       FOR UPDATE
+    `, [comprobanteId, tenantId]))[0];
+    if (!receipt) return { outcome: 'not_found', pedido_id: null, association_reason: 'pedido_no_asociado' };
+    if (receipt.pedido_id) {
+      return { outcome: 'already_associated', pedido_id: Number(receipt.pedido_id), association_reason: null };
+    }
+    if (Number(receipt.validado || 0) === 1 || receipt.procesado === true
+        || !['pendiente', 'en_revision'].includes(String(receipt.estado_revision || '').toLowerCase())) {
+      return { outcome: 'not_eligible', pedido_id: null, association_reason: 'pedido_no_asociado' };
+    }
+
+    const candidates = await txQuery(`
+      SELECT p.id AS pedido_id, p.empresa_id, p.chofer_id, p.zona_id, p.monto,
+             p.metodo_pago, FALSE AS pago_acreditado
+        FROM pedidos p
+        JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                              AND pe.empresa_id = p.empresa_id
+       WHERE p.empresa_id = $1
+         AND pe.empresa_id = $1
+         AND RIGHT(pg_catalog.regexp_replace(COALESCE(pe.telefono_normalizado, ''), '[^0-9]', '', 'g'), 10) = $2
+         AND p.monto = $3::numeric
+         AND p.created_at >= NOW() - ($4 * INTERVAL '1 hour')
+         AND LOWER(COALESCE(p.metodo_pago, '')) = 'transferencia'
+         AND p.estado IN ('pendiente', 'en_ruta', 'en_camino', 'entregado')
+         AND NOT EXISTS (SELECT 1 FROM pedido_pagos paid
+                          WHERE paid.pedido_id = p.id AND paid.empresa_id = p.empresa_id
+                            AND (paid.settlement_at IS NOT NULL
+                              OR LOWER(COALESCE(paid.estado, '')) IN ('pagado','aprobado','acreditado')))
+         AND NOT EXISTS (SELECT 1 FROM comprobante_pedido_aprobado_claims claim
+                          WHERE claim.tenant_key = p.empresa_id AND claim.pedido_id = p.id)
+       ORDER BY p.id
+       LIMIT 2
+       FOR UPDATE OF p, pe
+    `, [tenantId, normalizedPhone, exactAmount, recentWindowHours]);
+
+    if (candidates.length !== 1) {
+      const associationReason = candidates.length > 1 ? 'pedido_ambiguo' : 'pedido_no_asociado';
+      await txQuery(`
+        UPDATE comprobantes_transferencia
+           SET riesgo_score = CASE WHEN $3 = 'pedido_ambiguo' THEN 100 ELSE GREATEST(COALESCE(riesgo_score, 0), 70) END,
+               riesgo_flags = $3,
+               verified_reason = $3,
+               updated_at = NOW()
+         WHERE id = $1 AND empresa_id = $2 AND pedido_id IS NULL
+           AND COALESCE(validado, 0) = 0 AND COALESCE(procesado, FALSE) = FALSE
+           AND LOWER(COALESCE(estado_revision, 'pendiente')) IN ('pendiente', 'en_revision')
+      `, [comprobanteId, tenantId, associationReason]);
+      return {
+        outcome: candidates.length > 1 ? 'ambiguous' : 'no_match',
+        pedido_id: null,
+        association_reason: associationReason,
+      };
+    }
+
+    const candidate = candidates[0];
+    const updated = await txQuery(`
+      UPDATE comprobantes_transferencia
+         SET pedido_id = $3, chofer_id = $4, zona_id = $5,
+             riesgo_score = 0, riesgo_flags = NULL, verified_reason = NULL,
+             updated_at = NOW()
+       WHERE id = $1 AND empresa_id = $2 AND pedido_id IS NULL
+         AND COALESCE(validado, 0) = 0 AND COALESCE(procesado, FALSE) = FALSE
+         AND LOWER(COALESCE(estado_revision, 'pendiente')) IN ('pendiente', 'en_revision')
+       RETURNING id, empresa_id, pedido_id, chofer_id, zona_id, validado, procesado, estado_revision
+    `, [comprobanteId, tenantId, candidate.pedido_id, candidate.chofer_id || null, candidate.zona_id || null]);
+    if (updated.length !== 1) {
+      return { outcome: 'lost_race', pedido_id: null, association_reason: 'pedido_no_asociado' };
+    }
+    return {
+      ...updated[0],
+      outcome: 'associated',
+      pedido_monto: Number(candidate.monto),
+      pedido_metodo_pago: candidate.metodo_pago,
+      pedido_pago_acreditado: false,
+      association_reason: null,
+      association_method: 'fallback_amount_phone_recent',
+    };
+  });
+}
+
 export async function asociarComprobantePedidoPg(
   { id, actorRole, actorEmpresaId, pedidoId, actorId, reason },
   { withTransaction = dbWithTransaction } = {},
@@ -779,6 +884,50 @@ export async function asociarComprobantePedidoPg(
 // ============================================
 // 2. INSERTAR NUEVO COMPROBANTE (Con Vinculación Automática)
 // ============================================
+async function resolveExactTransferOrderByContext({ empresaId, contextMessageId, queryFn }) {
+  const tenantId = Number(empresaId);
+  const contextId = validateMetaWamid(contextMessageId);
+  if (!Number.isSafeInteger(tenantId) || tenantId <= 0 || !contextId) return null;
+
+  const outboundRows = await queryFn(`
+    SELECT id, transport_origin, cloud_template_key, notification_correlation_id
+      FROM wpp_outbox
+     WHERE empresa_id = $1
+       AND meta_message_id = $2
+     ORDER BY id
+     LIMIT 2
+     FOR UPDATE
+  `, [tenantId, contextId]);
+  if (outboundRows.length !== 1) return null;
+
+  const outbound = outboundRows[0];
+  const correlation = parseProactiveNotificationCorrelationId(outbound.notification_correlation_id);
+  if (outbound.transport_origin !== 'cloud'
+      || outbound.cloud_template_key !== 'transfer_payment'
+      || correlation?.templateKey !== 'transfer_payment') return null;
+
+  const orderRows = await queryFn(`
+    SELECT p.id AS pedido_id, p.empresa_id, p.chofer_id, p.zona_id, p.monto, p.metodo_pago,
+           EXISTS (SELECT 1 FROM pedido_pagos pp
+                    WHERE pp.pedido_id = p.id AND pp.empresa_id = p.empresa_id
+                      AND (pp.settlement_at IS NOT NULL
+                        OR LOWER(COALESCE(pp.estado, '')) IN ('pagado','aprobado','acreditado'))) AS pago_acreditado
+      FROM pedidos p
+     WHERE p.id = $1
+       AND p.empresa_id = $2
+       AND LOWER(COALESCE(p.metodo_pago, '')) = 'transferencia'
+       AND p.estado IN ('pendiente', 'en_ruta', 'en_camino', 'entregado')
+       AND NOT EXISTS (SELECT 1 FROM pedido_pagos paid
+                        WHERE paid.pedido_id = p.id AND paid.empresa_id = p.empresa_id
+                          AND (paid.settlement_at IS NOT NULL
+                            OR LOWER(COALESCE(paid.estado, '')) IN ('pagado','aprobado','acreditado')))
+       AND NOT EXISTS (SELECT 1 FROM comprobante_pedido_aprobado_claims claim
+                        WHERE claim.tenant_key = p.empresa_id AND claim.pedido_id = p.id)
+     FOR UPDATE OF p
+  `, [correlation.pedidoId, tenantId]);
+  return orderRows.length === 1 ? orderRows[0] : null;
+}
+
 async function insertarComprobantePgWork({
   telefono,
   replyJid = null,
@@ -787,6 +936,7 @@ async function insertarComprobantePgWork({
   fecha,
   empresaId = null,
   sourceMessageId = null,
+  contextMessageId = null,
   fileHash = null,
   archivoBinario = null,
   mimetype,
@@ -912,19 +1062,27 @@ async function insertarComprobantePgWork({
     ORDER BY p.empresa_id, p.id DESC
   `;
 
-  const matchResult = telClean
-    ? await queryFn(sqlMatch, explicitEmpresaId ? [telSuffix, explicitEmpresaId] : [telSuffix])
-    : [];
+  const exactContextOrder = normalizedTransportOrigin === 'cloud' && contextMessageId
+    ? await resolveExactTransferOrderByContext({
+        empresaId: explicitEmpresaId, contextMessageId, queryFn,
+      })
+    : null;
+  const useLegacyPhoneMatch = normalizedTransportOrigin !== 'cloud';
+  const matchResult = exactContextOrder
+    ? [exactContextOrder]
+    : (useLegacyPhoneMatch && telClean
+      ? await queryFn(sqlMatch, explicitEmpresaId ? [telSuffix, explicitEmpresaId] : [telSuffix])
+      : []);
   const eligibleMatches = explicitEmpresaId
     ? matchResult.filter(row => Number(row.empresa_id) === explicitEmpresaId)
     : matchResult;
-  const tenantAmbiguous = !explicitEmpresaId
+  const tenantAmbiguous = useLegacyPhoneMatch && !explicitEmpresaId
     && new Set(eligibleMatches.map(row => Number(row.empresa_id))).size > 1;
-  const orderAmbiguous = !!explicitEmpresaId && eligibleMatches.length > 1;
+  const orderAmbiguous = useLegacyPhoneMatch && !!explicitEmpresaId && eligibleMatches.length > 1;
   const ambiguous = tenantAmbiguous || orderAmbiguous;
-  let pedidoEncontrado = ambiguous ? {} : (eligibleMatches[0] || {});
+  let pedidoEncontrado = exactContextOrder || (ambiguous ? {} : (eligibleMatches[0] || {}));
 
-  if (pedidoEncontrado.pedido_id) {
+  if (!exactContextOrder && pedidoEncontrado.pedido_id) {
     const lockedMatches = await queryFn(
       `SELECT p.id AS pedido_id, p.empresa_id, p.chofer_id, p.monto, p.metodo_pago,
               EXISTS (SELECT 1 FROM pedido_pagos pp
@@ -1046,6 +1204,7 @@ async function insertarComprobantePgWork({
     file_hash: effectiveFileHash,
     ambiguous,
     association_reason: pendingReason,
+    association_method: exactContextOrder ? 'exact_context' : null,
   };
 }
 

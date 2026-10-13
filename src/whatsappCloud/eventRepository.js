@@ -53,6 +53,9 @@ function sanitizeMessage(message) {
       ...(typeof media.caption === 'string' ? { caption: media.caption } : {}),
       ...(type === 'document' && typeof media.filename === 'string' ? { filename: media.filename } : {}),
     };
+    if (message?.context !== undefined) {
+      content.context = { id: requireMetaWamid(message?.context?.id, 'context message id') };
+    }
   }
   return {
     messageId: requireMetaWamid(message?.id, 'message id'),

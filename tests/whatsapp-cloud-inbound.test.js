@@ -184,10 +184,15 @@ test('image/document usan processReceipt separado con tenant server-side y lease
     const consumer = createWhatsAppCloudInboundConsumer({
       owner: 'inbound-media',
       claimNext: async () => textRow({
-        message_type: messageType, phone_number_id: 'phone-2', event_data: { [messageType]: media },
+        message_type: messageType, phone_number_id: 'phone-2',
+        event_data: { [messageType]: media, context: { id: 'wamid.transfer-payment-context' } },
       }),
       loadTenant: async () => ({ empresaId: 2, phoneNumberId: 'phone-2', accessTokenEncrypted: 'cipher-2' }),
-      prepareReceipt: async input => { calls.push('prepare'); return { input, downloaded: true }; },
+      prepareReceipt: async input => {
+        calls.push('prepare');
+        assert.equal(input.contextMessageId, 'wamid.transfer-payment-context');
+        return { input, downloaded: true };
+      },
       scheduleRetry: async () => assert.fail('no debe reintentar'),
       startProcessing: async () => calls.push('start'),
       renewLease: async () => true,
@@ -198,6 +203,7 @@ test('image/document usan processReceipt separado con tenant server-side y lease
         assert.equal(input.prepared.downloaded, true);
         assert.equal(input.empresaId, 2);
         assert.equal(input.messageId, 'wamid.inbound-41');
+        assert.equal(input.contextMessageId, 'wamid.transfer-payment-context');
         assert.equal(input.senderId, '5493515550041');
         assert.deepEqual(input.media, media);
         assert.equal(input.tenant.phoneNumberId, 'phone-2');
