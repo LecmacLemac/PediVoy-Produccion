@@ -91,6 +91,19 @@ test('PostgreSQL real: lock timeout de migración revierte completo y luego perm
     await pool.query(migration);
     await pool.query(migration);
     assert.equal((await pool.query(`SELECT to_regclass('comprobante_operacion_claims') AS claims`)).rows[0].claims, 'comprobante_operacion_claims');
+    const trigger = (await pool.query(`
+      SELECT t.tgname, pg_catalog.pg_get_triggerdef(t.oid) AS definition,
+             pg_catalog.pg_get_functiondef(t.tgfoid) AS function_definition
+        FROM pg_catalog.pg_trigger t
+        JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+       WHERE c.relname = 'pedido_pagos'
+         AND t.tgname = 'trg_serializar_pedido_pago_comprobante'
+         AND NOT t.tgisinternal
+    `)).rows;
+    assert.equal(trigger.length, 1);
+    assert.match(trigger[0].definition, /BEFORE INSERT OR DELETE OR UPDATE ON .*pedido_pagos/i);
+    assert.match(trigger[0].function_definition, /FROM pedidos WHERE id = target_pedido_id FOR UPDATE/i);
+    assert.match(trigger[0].function_definition, /WHERE id IN \(OLD\.pedido_id, NEW\.pedido_id\)[\s\S]*ORDER BY id[\s\S]*FOR UPDATE/i);
   } finally {
     if (locker) {
       try { await locker.query('ROLLBACK'); } catch {}

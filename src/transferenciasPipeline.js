@@ -791,7 +791,8 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
       };
     }
 
-    if (!registroDB?.pedido_id && empresaId && transportOrigin === 'cloud') {
+    if (!registroDB?.pedido_id && empresaId && transportOrigin === 'cloud'
+        && registroDB?.context_id_provided === false) {
       await assertLease();
       const fallbackAssociation = await services.asociarComprobanteAutomaticamentePorMontoPg({
         id: registroDB.id,

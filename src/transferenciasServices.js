@@ -733,7 +733,6 @@ export async function asociarComprobanteAutomaticamentePorMontoPg(
                           WHERE claim.tenant_key = p.empresa_id AND claim.pedido_id = p.id)
        ORDER BY p.id
        LIMIT 2
-       FOR UPDATE OF p, pe
     `, [tenantId, normalizedPhone, exactAmount, recentWindowHours]);
 
     if (candidates.length !== 1) {
@@ -755,7 +754,49 @@ export async function asociarComprobanteAutomaticamentePorMontoPg(
       };
     }
 
-    const candidate = candidates[0];
+    let candidate = candidates[0];
+    // Orden canónico compartido con el trigger de pedido_pagos: pedido primero.
+    // La revalidación va en una sentencia posterior para no reutilizar el snapshot
+    // de una SELECT que pudo haber esperado a un pago concurrente.
+    const lockedOrder = await txQuery(`
+      SELECT id FROM pedidos WHERE id = $1 AND empresa_id = $2 FOR UPDATE
+    `, [candidate.pedido_id, tenantId]);
+    const revalidated = lockedOrder.length === 1 ? await txQuery(`
+      SELECT p.id AS pedido_id, p.empresa_id, p.chofer_id, p.zona_id, p.monto,
+             p.metodo_pago, FALSE AS pago_acreditado
+        FROM pedidos p
+        JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                              AND pe.empresa_id = p.empresa_id
+       WHERE p.id = $1
+         AND p.empresa_id = $2
+         AND pe.empresa_id = $2
+         AND RIGHT(pg_catalog.regexp_replace(COALESCE(pe.telefono_normalizado, ''), '[^0-9]', '', 'g'), 10) = $3
+         AND p.monto = $4::numeric
+         AND p.created_at >= NOW() - ($5 * INTERVAL '1 hour')
+         AND LOWER(COALESCE(p.metodo_pago, '')) = 'transferencia'
+         AND p.estado IN ('pendiente', 'en_ruta', 'en_camino', 'entregado')
+         AND NOT EXISTS (SELECT 1 FROM pedido_pagos paid
+                          WHERE paid.pedido_id = p.id AND paid.empresa_id = p.empresa_id
+                            AND (paid.settlement_at IS NOT NULL
+                              OR LOWER(COALESCE(paid.estado, '')) IN ('pagado','aprobado','acreditado')))
+         AND NOT EXISTS (SELECT 1 FROM comprobante_pedido_aprobado_claims claim
+                          WHERE claim.tenant_key = p.empresa_id AND claim.pedido_id = p.id)
+       FOR UPDATE OF pe
+    `, [candidate.pedido_id, tenantId, normalizedPhone, exactAmount, recentWindowHours]) : [];
+    if (revalidated.length !== 1) {
+      await txQuery(`
+        UPDATE comprobantes_transferencia
+           SET riesgo_score = GREATEST(COALESCE(riesgo_score, 0), 70),
+               riesgo_flags = 'pedido_no_asociado',
+               verified_reason = 'pedido_no_asociado',
+               updated_at = NOW()
+         WHERE id = $1 AND empresa_id = $2 AND pedido_id IS NULL
+           AND COALESCE(validado, 0) = 0 AND COALESCE(procesado, FALSE) = FALSE
+           AND LOWER(COALESCE(estado_revision, 'pendiente')) IN ('pendiente', 'en_revision')
+      `, [comprobanteId, tenantId]);
+      return { outcome: 'no_match', pedido_id: null, association_reason: 'pedido_no_asociado' };
+    }
+    [candidate] = revalidated;
     const updated = await txQuery(`
       UPDATE comprobantes_transferencia
          SET pedido_id = $3, chofer_id = $4, zona_id = $5,
@@ -886,8 +927,12 @@ export async function asociarComprobantePedidoPg(
 // ============================================
 async function resolveExactTransferOrderByContext({ empresaId, contextMessageId, queryFn }) {
   const tenantId = Number(empresaId);
+  const contextProvided = contextMessageId !== null && contextMessageId !== undefined;
   const contextId = validateMetaWamid(contextMessageId);
-  if (!Number.isSafeInteger(tenantId) || tenantId <= 0 || !contextId) return null;
+  if (!contextProvided) return { provided: false, outcome: 'absent', order: null };
+  if (!Number.isSafeInteger(tenantId) || tenantId <= 0 || !contextId) {
+    return { provided: true, outcome: 'invalid_context_id', order: null };
+  }
 
   const outboundRows = await queryFn(`
     SELECT id, transport_origin, cloud_template_key, notification_correlation_id
@@ -898,20 +943,39 @@ async function resolveExactTransferOrderByContext({ empresaId, contextMessageId,
      LIMIT 2
      FOR UPDATE
   `, [tenantId, contextId]);
-  if (outboundRows.length !== 1) return null;
+  if (outboundRows.length === 0) {
+    return { provided: true, outcome: 'no_matching_outbox', order: null };
+  }
+  if (outboundRows.length !== 1) {
+    return { provided: true, outcome: 'ambiguous_outbox', order: null };
+  }
 
   const outbound = outboundRows[0];
-  const correlation = parseProactiveNotificationCorrelationId(outbound.notification_correlation_id);
   if (outbound.transport_origin !== 'cloud'
-      || outbound.cloud_template_key !== 'transfer_payment'
-      || correlation?.templateKey !== 'transfer_payment') return null;
+      || outbound.cloud_template_key !== 'transfer_payment') {
+    return { provided: true, outcome: 'outbox_not_eligible', order: null };
+  }
+  const correlation = parseProactiveNotificationCorrelationId(outbound.notification_correlation_id);
+  if (correlation?.templateKey !== 'transfer_payment') {
+    return { provided: true, outcome: 'invalid_correlation', order: null };
+  }
+
+  // Orden canónico: pedidos primero. pedido_pagos toma el mismo lock por trigger.
+  // La elegibilidad se relee en una sentencia posterior para obtener un snapshot
+  // nuevo después de cualquier writer de pagos que haya ganado el lock.
+  const lockedOrder = await queryFn(`
+    SELECT id
+      FROM pedidos
+     WHERE id = $1 AND empresa_id = $2
+     FOR UPDATE
+  `, [correlation.pedidoId, tenantId]);
+  if (lockedOrder.length !== 1) {
+    return { provided: true, outcome: 'order_not_found', order: null };
+  }
 
   const orderRows = await queryFn(`
     SELECT p.id AS pedido_id, p.empresa_id, p.chofer_id, p.zona_id, p.monto, p.metodo_pago,
-           EXISTS (SELECT 1 FROM pedido_pagos pp
-                    WHERE pp.pedido_id = p.id AND pp.empresa_id = p.empresa_id
-                      AND (pp.settlement_at IS NOT NULL
-                        OR LOWER(COALESCE(pp.estado, '')) IN ('pagado','aprobado','acreditado'))) AS pago_acreditado
+           FALSE AS pago_acreditado
       FROM pedidos p
      WHERE p.id = $1
        AND p.empresa_id = $2
@@ -923,9 +987,10 @@ async function resolveExactTransferOrderByContext({ empresaId, contextMessageId,
                             OR LOWER(COALESCE(paid.estado, '')) IN ('pagado','aprobado','acreditado')))
        AND NOT EXISTS (SELECT 1 FROM comprobante_pedido_aprobado_claims claim
                         WHERE claim.tenant_key = p.empresa_id AND claim.pedido_id = p.id)
-     FOR UPDATE OF p
   `, [correlation.pedidoId, tenantId]);
-  return orderRows.length === 1 ? orderRows[0] : null;
+  return orderRows.length === 1
+    ? { provided: true, outcome: 'matched', order: orderRows[0] }
+    : { provided: true, outcome: 'order_not_eligible', order: null };
 }
 
 async function insertarComprobantePgWork({
@@ -1062,11 +1127,12 @@ async function insertarComprobantePgWork({
     ORDER BY p.empresa_id, p.id DESC
   `;
 
-  const exactContextOrder = normalizedTransportOrigin === 'cloud' && contextMessageId
+  const exactContextResolution = normalizedTransportOrigin === 'cloud'
     ? await resolveExactTransferOrderByContext({
         empresaId: explicitEmpresaId, contextMessageId, queryFn,
       })
-    : null;
+    : { provided: false, outcome: 'not_applicable', order: null };
+  const exactContextOrder = exactContextResolution.order;
   const useLegacyPhoneMatch = normalizedTransportOrigin !== 'cloud';
   const matchResult = exactContextOrder
     ? [exactContextOrder]
@@ -1205,6 +1271,8 @@ async function insertarComprobantePgWork({
     ambiguous,
     association_reason: pendingReason,
     association_method: exactContextOrder ? 'exact_context' : null,
+    context_id_provided: exactContextResolution.provided,
+    exact_context_outcome: exactContextResolution.outcome,
   };
 }
 

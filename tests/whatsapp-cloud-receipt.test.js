@@ -465,6 +465,7 @@ test('pipeline ejecuta fallback por monto sólo después de IA y conserva revisi
       insertarComprobantePg: async () => ({
         id: 91, empresa_id: 2, pedido_id: null, source_chat_jid: null, transport_origin: 'cloud',
         file_hash: 'a'.repeat(64), association_reason: 'pedido_no_asociado',
+        context_id_provided: false, exact_context_outcome: 'absent',
       }),
       prepareImageForAI: async () => ({ base64: 'x', mimeType: 'image/jpeg' }),
       analyzeReceiptWithAI: async () => {
