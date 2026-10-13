@@ -140,6 +140,62 @@ async function seedOrder(pool, {
   `, [id, empresaId, pointId, amount, method, status, createdAt]);
 }
 
+async function seedReceipt(pool, { phone, amount }) {
+  return (await pool.query(`
+    INSERT INTO comprobantes_transferencia
+      (empresa_id, telefono, estado_revision, validado, procesado, monto)
+    VALUES (1, $1, 'pendiente', 0, FALSE, $2)
+    RETURNING id
+  `, [phone, amount])).rows[0];
+}
+
+const cardinalityWriterScenarios = [
+  {
+    name: 'INSERT concurrente de un segundo pedido',
+    seed: async () => {},
+    mutate: async client => {
+      await client.query(`
+        INSERT INTO puntos_entrega(id, empresa_id, telefono_normalizado)
+        VALUES (2202, 1, '5493515552200')
+      `);
+      await client.query(`
+        INSERT INTO pedidos(id, empresa_id, punto_entrega_id, monto, metodo_pago, estado, created_at)
+        VALUES (1202, 1, 2202, 12200, 'transferencia', 'pendiente', NOW())
+      `);
+    },
+  },
+  {
+    name: 'UPDATE de monto vuelve elegible un pedido existente',
+    seed: pool => seedOrder(pool, { id: 1202, phone: '5493515552200', amount: 1 }),
+    mutate: client => client.query('UPDATE pedidos SET monto = 12200 WHERE id = 1202'),
+  },
+  {
+    name: 'UPDATE de metodo_pago vuelve elegible un pedido existente',
+    seed: pool => seedOrder(pool, { id: 1202, phone: '5493515552200', amount: 12200, method: 'efectivo' }),
+    mutate: client => client.query("UPDATE pedidos SET metodo_pago = 'transferencia' WHERE id = 1202"),
+  },
+  {
+    name: 'UPDATE de estado vuelve elegible un pedido existente',
+    seed: pool => seedOrder(pool, { id: 1202, phone: '5493515552200', amount: 12200, status: 'cancelado' }),
+    mutate: client => client.query("UPDATE pedidos SET estado = 'pendiente' WHERE id = 1202"),
+  },
+  {
+    name: 'UPDATE del teléfono del punto vuelve elegible un pedido existente',
+    seed: pool => seedOrder(pool, { id: 1202, phone: '5493515559999', amount: 12200 }),
+    mutate: client => client.query(`
+      UPDATE puntos_entrega SET telefono_normalizado = '5493515552200' WHERE id = 2202
+    `),
+  },
+  {
+    name: 'UPDATE de created_at cruza la ventana y vuelve elegible un pedido existente',
+    seed: pool => seedOrder(pool, {
+      id: 1202, phone: '5493515552200', amount: 12200,
+      createdAt: new Date(Date.now() - 8 * 86400000),
+    }),
+    mutate: client => client.query('UPDATE pedidos SET created_at = NOW() WHERE id = 1202'),
+  },
+];
+
 test('PostgreSQL real: context.id exacto vincula el pedido correlacionado sin usar históricos del teléfono', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
@@ -627,5 +683,225 @@ test('PostgreSQL real: lock y revalidación no sobrescriben asociación ni decis
         pedido_id: null, validado: 1, procesado: true, estado_revision: 'aprobado',
       });
     }
+  });
+});
+
+test('PostgreSQL real: writer que gana antes de la exclusión obliga a releer cardinalidad completa', postgresOptions, async () => {
+  for (const scenario of cardinalityWriterScenarios) {
+    await withIsolatedPostgres(async pool => {
+      await createFixture(pool);
+      await seedOrder(pool, { id: 1201, phone: '5493515552200', amount: 12200 });
+      await scenario.seed(pool);
+      const receipt = await seedReceipt(pool, { phone: '5493515552200', amount: 12200 });
+
+      const writer = await pool.connect();
+      try {
+        await writer.query('BEGIN');
+        await scenario.mutate(writer);
+
+        let notifyAssociationPid;
+        const associationPid = new Promise(resolve => { notifyAssociationPid = resolve; });
+        const association = asociarComprobanteAutomaticamentePorMontoPg({
+          id: receipt.id, empresaId: 1, telefono: '5493515552200', monto: 12200, windowHours: 72,
+        }, { withTransaction: transactionFor(pool, { onBackendPid: notifyAssociationPid }) });
+        await waitUntilBlocked(pool, await associationPid);
+        await writer.query('COMMIT');
+
+        const result = await association;
+        assert.deepEqual(result, {
+          outcome: 'ambiguous', pedido_id: null, association_reason: 'pedido_ambiguo',
+        }, scenario.name);
+      } finally {
+        try { await writer.query('ROLLBACK'); } catch {}
+        writer.release();
+      }
+
+      const final = (await pool.query(`
+        SELECT pedido_id, riesgo_flags, verified_reason
+          FROM comprobantes_transferencia WHERE id = $1
+      `, [receipt.id])).rows[0];
+      assert.deepEqual(final, {
+        pedido_id: null, riesgo_flags: 'pedido_ambiguo', verified_reason: 'pedido_ambiguo',
+      }, scenario.name);
+    });
+  }
+});
+
+test('PostgreSQL real: asociación que gana congela cardinalidad y el writer completa después', postgresOptions, async () => {
+  for (const scenario of cardinalityWriterScenarios) {
+    await withIsolatedPostgres(async pool => {
+      await createFixture(pool);
+      await seedOrder(pool, { id: 1201, phone: '5493515552200', amount: 12200 });
+      await scenario.seed(pool);
+      const receipt = await seedReceipt(pool, { phone: '5493515552200', amount: 12200 });
+
+      let notifyTablesLocked;
+      const tablesLocked = new Promise(resolve => { notifyTablesLocked = resolve; });
+      let resumeAssociation;
+      const canAssociate = new Promise(resolve => { resumeAssociation = resolve; });
+      const pausedTransaction = async work => {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          const txQuery = async (sql, params = []) => {
+            const rows = (await client.query(sql, params)).rows;
+            if (/LOCK TABLE public\.puntos_entrega, public\.pedidos IN SHARE MODE/i.test(sql)) {
+              notifyTablesLocked();
+              await canAssociate;
+            }
+            return rows;
+          };
+          const result = await work(txQuery);
+          await client.query('COMMIT');
+          return result;
+        } catch (error) {
+          await client.query('ROLLBACK');
+          throw error;
+        } finally {
+          client.release();
+        }
+      };
+
+      const association = asociarComprobanteAutomaticamentePorMontoPg({
+        id: receipt.id, empresaId: 1, telefono: '5493515552200', monto: 12200, windowHours: 72,
+      }, { withTransaction: pausedTransaction });
+      await tablesLocked;
+
+      const writer = await pool.connect();
+      try {
+        await writer.query('BEGIN');
+        const writerPid = (await writer.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+        const mutation = scenario.mutate(writer);
+        await waitUntilBlocked(pool, writerPid);
+        resumeAssociation();
+
+        const result = await association;
+        assert.equal(result.outcome, 'associated', scenario.name);
+        assert.equal(result.pedido_id, 1201, scenario.name);
+        await mutation;
+        await writer.query('COMMIT');
+      } finally {
+        try { await writer.query('ROLLBACK'); } catch {}
+        writer.release();
+      }
+
+      const final = (await pool.query(`
+        SELECT pedido_id FROM comprobantes_transferencia WHERE id = $1
+      `, [receipt.id])).rows[0];
+      assert.equal(final.pedido_id, 1201, scenario.name);
+      const eligible = (await pool.query(`
+        SELECT count(*)::int AS total
+          FROM pedidos p
+          JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id AND pe.empresa_id = p.empresa_id
+         WHERE p.empresa_id = 1
+           AND RIGHT(pg_catalog.regexp_replace(COALESCE(pe.telefono_normalizado, ''), '[^0-9]', '', 'g'), 10) = '3515552200'
+           AND p.monto = 12200::numeric
+           AND p.created_at >= NOW() - INTERVAL '72 hours'
+           AND LOWER(COALESCE(p.metodo_pago, '')) = 'transferencia'
+           AND p.estado IN ('pendiente', 'en_ruta', 'en_camino', 'entregado')
+      `)).rows[0].total;
+      assert.equal(eligible, 2, scenario.name);
+    });
+  }
+});
+
+test('PostgreSQL real: timeout de exclusión falla cerrado y deja revisión manual sin retry', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    await seedOrder(pool, { id: 1301, phone: '5493515552300', amount: 12300 });
+    const receipt = await seedReceipt(pool, { phone: '5493515552300', amount: 12300 });
+    const blocker = await pool.connect();
+    const previousTimeout = process.env.TRANSFERENCIA_ASSOCIATION_LOCK_TIMEOUT_MS;
+    let transactions = 0;
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('UPDATE pedidos SET monto = monto WHERE id = 1301');
+      process.env.TRANSFERENCIA_ASSOCIATION_LOCK_TIMEOUT_MS = '50';
+      const countedTransaction = async work => {
+        transactions += 1;
+        return transactionFor(pool)(work);
+      };
+      const result = await asociarComprobanteAutomaticamentePorMontoPg({
+        id: receipt.id, empresaId: 1, telefono: '5493515552300', monto: 12300, windowHours: 72,
+      }, { withTransaction: countedTransaction });
+      assert.deepEqual(result, {
+        outcome: 'lock_contended', pedido_id: null, association_reason: 'pedido_no_asociado',
+      });
+      assert.equal(transactions, 2, 'una transacción fallida y una transición manual, sin retry');
+    } finally {
+      if (previousTimeout === undefined) delete process.env.TRANSFERENCIA_ASSOCIATION_LOCK_TIMEOUT_MS;
+      else process.env.TRANSFERENCIA_ASSOCIATION_LOCK_TIMEOUT_MS = previousTimeout;
+      await blocker.query('ROLLBACK');
+      blocker.release();
+    }
+    assert.deepEqual((await pool.query(`
+      SELECT pedido_id, riesgo_flags, verified_reason
+        FROM comprobantes_transferencia WHERE id = $1
+    `, [receipt.id])).rows[0], {
+      pedido_id: null, riesgo_flags: 'pedido_no_asociado', verified_reason: 'pedido_no_asociado',
+    });
+  });
+});
+
+test('PostgreSQL real: ciclo receipt→tablas versus pedido→receipt no reintenta y queda serial', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    await seedOrder(pool, { id: 1401, phone: '5493515552400', amount: 12400 });
+    const receipt = await seedReceipt(pool, { phone: '5493515552400', amount: 12400 });
+    const writer = await pool.connect();
+    const previousTimeout = process.env.TRANSFERENCIA_ASSOCIATION_LOCK_TIMEOUT_MS;
+    let transactions = 0;
+    try {
+      process.env.TRANSFERENCIA_ASSOCIATION_LOCK_TIMEOUT_MS = '5000';
+      await writer.query('BEGIN');
+      await writer.query('UPDATE pedidos SET monto = monto WHERE id = 1401');
+
+      let notifyAssociationPid;
+      const associationPid = new Promise(resolve => { notifyAssociationPid = resolve; });
+      const countedTransaction = async work => {
+        transactions += 1;
+        return transactionFor(pool, { onBackendPid: transactions === 1 ? notifyAssociationPid : null })(work);
+      };
+      const association = asociarComprobanteAutomaticamentePorMontoPg({
+        id: receipt.id, empresaId: 1, telefono: '5493515552400', monto: 12400, windowHours: 72,
+      }, { withTransaction: countedTransaction });
+      await waitUntilBlocked(pool, await associationPid);
+
+      let writerOutcome = 'locked_receipt';
+      try {
+        await writer.query(`
+          SELECT id FROM comprobantes_transferencia WHERE id = $1 FOR UPDATE
+        `, [receipt.id]);
+        await writer.query('COMMIT');
+      } catch (error) {
+        assert.equal(error.code, '40P01');
+        writerOutcome = 'deadlock_victim';
+        await writer.query('ROLLBACK');
+      }
+
+      const result = await association;
+      if (writerOutcome === 'deadlock_victim') {
+        assert.equal(result.outcome, 'associated');
+        assert.equal(transactions, 1, 'el fallback no reintenta tras ganar el ciclo');
+      } else {
+        assert.deepEqual(result, {
+          outcome: 'lock_contended', pedido_id: null, association_reason: 'pedido_no_asociado',
+        });
+        assert.equal(transactions, 2, 'rollback y transición manual, nunca retry del trabajo');
+      }
+    } finally {
+      if (previousTimeout === undefined) delete process.env.TRANSFERENCIA_ASSOCIATION_LOCK_TIMEOUT_MS;
+      else process.env.TRANSFERENCIA_ASSOCIATION_LOCK_TIMEOUT_MS = previousTimeout;
+      try { await writer.query('ROLLBACK'); } catch {}
+      writer.release();
+    }
+
+    const final = (await pool.query(`
+      SELECT pedido_id, riesgo_flags FROM comprobantes_transferencia WHERE id = $1
+    `, [receipt.id])).rows[0];
+    assert.ok(
+      (final.pedido_id === 1401 && final.riesgo_flags === null)
+      || (final.pedido_id === null && final.riesgo_flags === 'pedido_no_asociado'),
+    );
   });
 });

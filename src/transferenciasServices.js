@@ -678,9 +678,11 @@ export async function aprobarComprobanteManualAtomicoPg(
   }
 }
 
+const fallbackAssociationTransaction = work => dbWithTransaction(work, { maxRetries: 0 });
+
 export async function asociarComprobanteAutomaticamentePorMontoPg(
   { id, empresaId, telefono, monto, windowHours = process.env.TRANSFERENCIA_ASSOCIATION_WINDOW_HOURS },
-  { withTransaction = dbWithTransaction } = {},
+  { withTransaction = fallbackAssociationTransaction } = {},
 ) {
   const comprobanteId = Number(id);
   const tenantId = Number(empresaId);
@@ -696,7 +698,12 @@ export async function asociarComprobanteAutomaticamentePorMontoPg(
     return { outcome: 'invalid_input', pedido_id: null, association_reason: 'pedido_no_asociado' };
   }
 
-  return withTransaction(async txQuery => {
+  const configuredLockTimeout = Number(process.env.TRANSFERENCIA_ASSOCIATION_LOCK_TIMEOUT_MS);
+  const lockTimeoutMs = Number.isSafeInteger(configuredLockTimeout)
+    && configuredLockTimeout >= 50 && configuredLockTimeout <= 5000 ? configuredLockTimeout : 750;
+
+  try {
+    return await withTransaction(async txQuery => {
     const receipt = (await txQuery(`
       SELECT id, empresa_id, pedido_id, estado_revision, validado, procesado
         FROM comprobantes_transferencia
@@ -712,6 +719,14 @@ export async function asociarComprobanteAutomaticamentePorMontoPg(
       return { outcome: 'not_eligible', pedido_id: null, association_reason: 'pedido_no_asociado' };
     }
 
+    // SHARE bloquea ROW EXCLUSIVE, por lo que congela INSERT/UPDATE/DELETE de ambas
+    // tablas durante la decisión. El orden punto -> pedido sigue los flujos de alta;
+    // un writer con orden inverso queda acotado por lock_timeout y falla cerrado.
+    await txQuery(`SELECT pg_catalog.set_config('lock_timeout', $1, TRUE)`, [`${lockTimeoutMs}ms`]);
+    await txQuery('LOCK TABLE public.puntos_entrega, public.pedidos IN SHARE MODE');
+    await txQuery(`SELECT pg_catalog.set_config('lock_timeout', '0', TRUE)`);
+
+    // Sentencia separada: snapshot nuevo después de esperar writers previos.
     const candidates = await txQuery(`
       SELECT p.id AS pedido_id, p.empresa_id, p.chofer_id, p.zona_id, p.monto,
              p.metodo_pago, FALSE AS pago_acreditado
@@ -819,7 +834,23 @@ export async function asociarComprobanteAutomaticamentePorMontoPg(
       association_reason: null,
       association_method: 'fallback_amount_phone_recent',
     };
-  });
+    });
+  } catch (error) {
+    if (!['55P03', '40P01'].includes(error?.code)) throw error;
+    await withTransaction(async txQuery => {
+      await txQuery(`
+        UPDATE comprobantes_transferencia
+           SET riesgo_score = GREATEST(COALESCE(riesgo_score, 0), 70),
+               riesgo_flags = 'pedido_no_asociado',
+               verified_reason = 'pedido_no_asociado',
+               updated_at = NOW()
+         WHERE id = $1 AND empresa_id = $2 AND pedido_id IS NULL
+           AND COALESCE(validado, 0) = 0 AND COALESCE(procesado, FALSE) = FALSE
+           AND LOWER(COALESCE(estado_revision, 'pendiente')) IN ('pendiente', 'en_revision')
+      `, [comprobanteId, tenantId]);
+    });
+    return { outcome: 'lock_contended', pedido_id: null, association_reason: 'pedido_no_asociado' };
+  }
 }
 
 export async function asociarComprobantePedidoPg(
