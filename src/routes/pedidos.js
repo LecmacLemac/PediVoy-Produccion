@@ -81,10 +81,11 @@ export function createUpdatePedidoHandler({
         const empresaRaw = body.empresa_id;
         const itemsPresent = hasOwn(body, 'items');
         const finalized = current.estado === 'entregado' || current.estado === 'cancelado';
+        const reopeningCancelled = current.estado === 'cancelado' && estadoPresent && estado === 'pendiente';
         if (finalized && itemsPresent) {
           throw pedidoUpdateError(409, 'El pedido finalizado no admite cambios de ítems');
         }
-        if (finalized && estadoPresent && estado !== null && estado !== current.estado) {
+        if (finalized && estadoPresent && estado !== null && estado !== current.estado && !reopeningCancelled) {
           throw pedidoUpdateError(409, 'El pedido finalizado sólo admite correcciones administrativas');
         }
         if (finalized && empresaPresent && empresaRaw !== null
@@ -145,7 +146,7 @@ export function createUpdatePedidoHandler({
         const sets = [];
         const vals = [];
         let idx = 1;
-        if (!finalized && estadoPresent && estado !== null && estado !== current.estado) {
+        if ((!finalized || reopeningCancelled) && estadoPresent && estado !== null && estado !== current.estado) {
           sets.push(`estado = $${idx++}`);
           vals.push(estado);
         }
@@ -191,7 +192,7 @@ export function createUpdatePedidoHandler({
 
         return {
           row: updated,
-          estadoChanged: !finalized && estadoPresent && estado !== null && estado !== current.estado,
+          estadoChanged: (!finalized || reopeningCancelled) && estadoPresent && estado !== null && estado !== current.estado,
           requestedEstado: estado,
         };
       });
@@ -253,8 +254,14 @@ export function createUpdatePedidoHandler({
   };
 }
 
-export function createPedidosRouter() {
+export function createPedidosRouter({ withAuthFn = withAuth, mapsBrowserEnv = process.env } = {}) {
   const router = express.Router();
+  router.get('/maps-config', withAuthFn, requireCanonicalBackofficeRole, (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const apiKey = String(mapsBrowserEnv.GOOGLE_MAPS_BROWSER_API_KEY || '').trim();
+    if (!apiKey) return res.status(503).json({ error: 'Google Maps no está configurado.' });
+    return res.json({ apiKey, mapId: String(mapsBrowserEnv.GOOGLE_MAPS_MAP_ID || '').trim() || 'DEMO_MAP_ID' });
+  });
   const dashboardFechaExpr = `COALESCE(
     p.fecha_entrega_estimada,
     (p.fecha_entrega AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,

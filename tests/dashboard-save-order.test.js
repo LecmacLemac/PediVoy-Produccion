@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
+import { buildPedidoSavePlan } from '../pedidos/dashboard-order-edit.js';
 
 const source = await readFile(new URL('../pedidos/dashboard.html', import.meta.url), 'utf8');
 
@@ -12,7 +13,7 @@ function saveHandlerSource() {
   return source.slice(start, end);
 }
 
-function createHarness({ finalized = false, pedidoResponse } = {}) {
+function createHarness({ finalized = false, allowReopen = false, pedidoResponse } = {}) {
   const requests = [];
   const errors = [];
   let closed = false;
@@ -38,7 +39,7 @@ function createHarness({ finalized = false, pedidoResponse } = {}) {
     ['#dlg_empresa_id', { value: '7' }],
     ['#dlg_chofer_id', { value: '3' }],
     ['#dlg_zona_id', { value: '2' }],
-    ['#dlg_estado', { value: 'entregado' }],
+    ['#dlg_estado', { value: allowReopen ? 'pendiente' : 'entregado' }],
     ['#dlg_metodo', { value: 'efectivo' }],
   ]);
 
@@ -46,6 +47,7 @@ function createHarness({ finalized = false, pedidoResponse } = {}) {
     saveBusy: false,
     editingId: 42,
     editingPedidoFinalizado: finalized,
+    editingPedidoAllowReopen: allowReopen,
     pedidoEditCoordinator: {
       capture: () => activeContext,
       isActive: context => context === activeContext,
@@ -66,21 +68,7 @@ function createHarness({ finalized = false, pedidoResponse } = {}) {
     showToast() {},
     loadPedidos: async () => {},
     applyFilters() {},
-    buildPedidoSavePlan({ items, estado, metodoPago, empresaId, choferId, zonaId }) {
-      return finalized
-        ? {
-            pedidoBody: { metodo_pago: metodoPago, chofer_id: choferId, zona_id: zonaId },
-          }
-        : {
-            pedidoBody: {
-              items,
-              estado,
-              metodo_pago: metodoPago,
-              chofer_id: choferId,
-              zona_id: zonaId,
-            },
-          };
-    },
+    buildPedidoSavePlan,
   };
 
   vm.runInNewContext(saveHandlerSource(), context, { filename: 'dashboard-save-handler.js' });
@@ -133,6 +121,17 @@ test('al corregir un pedido finalizado omite PUT items y envía sólo campos adm
     metodo_pago: 'efectivo',
     chofer_id: 3,
     zona_id: 2,
+  });
+  assert.equal(harness.wasClosed(), true);
+});
+
+test('reabrir cancelado guarda pendiente en un único PUT sin reenviar ítems', async () => {
+  const harness = createHarness({ finalized: true, allowReopen: true });
+  await harness.context.btnSaveAll.onclick();
+  assert.equal(harness.requests.length, 1);
+  assert.equal(harness.requests[0].url, '/api/pedidos/42');
+  assert.deepEqual(JSON.parse(harness.requests[0].options.body), {
+    estado: 'pendiente', metodo_pago: 'efectivo', chofer_id: 3, zona_id: 2,
   });
   assert.equal(harness.wasClosed(), true);
 });

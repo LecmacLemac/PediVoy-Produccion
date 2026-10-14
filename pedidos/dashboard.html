@@ -7,7 +7,6 @@
   <link rel="stylesheet" href="theme-base.css" />
   
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3ynhPuFFY6MZ4w2qWfI7wI7gPVAyk=" crossorigin="anonymous">
 
 <style>
   :root {
@@ -417,6 +416,13 @@
   .modal-header { padding: 1.2rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); }
   .modal-body { padding: 1.5rem; overflow-y: auto; max-height: 70vh; }
   .modal-footer { padding: 1.2rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); }
+
+  #dlgUbicacion[open] { display:flex; flex-direction:column; max-height:calc(100dvh - 20px); overflow:hidden; }
+  #dlgUbicacion > .modal-header, #dlgUbicacion > .modal-footer { flex-shrink:0; }
+  #dlgUbicacion > .modal-body { min-height:0; max-height:none; }
+  @media (max-width:600px) {
+    #dlgUbicacion .location-map { height:36dvh; min-height:220px; }
+  }
 
   .location-summary { display:grid; grid-template-columns:1fr auto; gap:0.8rem; align-items:start; margin-bottom:1rem; }
   .location-summary strong { display:block; color:#fff; margin-bottom:0.2rem; }
@@ -1024,9 +1030,9 @@
   <div id="toast" class="toast"></div>
 
   <script src="/pedidos/info-tec/safe-storage.js"></script>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
   <script type="module">
     import { hasValidCoordinates } from './location-utils.js';
+    import { loadDashboardGoogleMaps } from './dashboard-google-map.js';
     import { applyCloudInboxNavigation } from './dashboard-nav.js';
     import { applyFinalizedOrderControls, buildPedidoSavePlan, createPedidoEditCoordinator, isPedidoFinalizado, resetPedidoEditView } from './dashboard-order-edit.js';
 
@@ -1054,6 +1060,9 @@
     const locationError = $('#locationError');
     const locationStatus = $('#locationStatus');
     let locationMap = null;
+    let locationMapPromise = null;
+    let locationOpenGeneration = 0;
+    let locationMapUnavailable = false;
     let locationMarker = null;
     let locationPedido = null;
     let locationDraft = null;
@@ -1104,6 +1113,7 @@
     let zonasEmpresaId = null;
     let editingId    = null;
     let editingPedidoFinalizado = false;
+    let editingPedidoAllowReopen = false;
     const pedidoEditCoordinator = createPedidoEditCoordinator();
     let saveBusy      = false;
     let deleteBusy    = false;
@@ -1185,30 +1195,50 @@
       locationLng.value = lngNum.toFixed(7);
       locationStatus.textContent = 'Pin listo para guardar';
       locationStatus.classList.add('ready');
+      if (!locationMap || locationMapUnavailable) return;
+      const position = { lat: latNum, lng: lngNum };
       if (!locationMarker) {
-        locationMarker = L.marker([latNum, lngNum], { draggable: true }).addTo(locationMap);
-        locationMarker.on('dragend', event => {
-          const pos = event.target.getLatLng();
-          setLocationDraft(pos.lat, pos.lng);
+        locationMarker = new google.maps.marker.AdvancedMarkerElement({ map: locationMap, position, gmpDraggable: true, title: 'Punto de entrega: arrastrá para corregir la ubicación' });
+        locationMarker.addListener('dragend', () => {
+          const pos = locationMarker.position;
+          setLocationDraft(typeof pos.lat === 'function' ? pos.lat() : pos.lat, typeof pos.lng === 'function' ? pos.lng() : pos.lng);
         });
       } else {
-        locationMarker.setLatLng([latNum, lngNum]);
+        locationMarker.position = position;
       }
-      if (center) locationMap.setView([latNum, lngNum], zoom);
+      if (center) { locationMap.setCenter(position); locationMap.setZoom(zoom); }
     }
 
-    function ensureLocationMap() {
+    async function ensureLocationMap() {
+      if (locationMapUnavailable) throw new Error('Google Maps no está disponible. Recargá la página e intentá nuevamente.');
       if (locationMap) return;
-      if (!window.L) throw new Error('No se pudo cargar el mapa. Revisá la conexión e intentá nuevamente.');
-      locationMap = L.map('locationMap', { zoomControl: true }).setView([-32.5, -63.5], 5);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; OpenStreetMap contributors',
-      }).addTo(locationMap);
-      locationMap.on('click', event => setLocationDraft(event.latlng.lat, event.latlng.lng));
+      if (!locationMapPromise) {
+        locationMapPromise = (async () => {
+          const config = await loadDashboardGoogleMaps(authFetch, message => {
+            locationMapUnavailable = true;
+            locationError.textContent = message;
+            $('#btnAutoLocation').disabled = true;
+            $('#btnSaveLocation').disabled = true;
+          });
+          locationMap = new google.maps.Map($('#locationMap'), {
+            center: { lat: -32.5, lng: -63.5 }, zoom: 5, mapId: config.mapId || 'DEMO_MAP_ID',
+            mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
+          });
+          locationMap.addListener('click', event => {
+            if (event.latLng && locationDialog.open) setLocationDraft(event.latLng.lat(), event.latLng.lng());
+          });
+          const observer = new ResizeObserver(() => {
+            if (!locationDialog.open || locationMapUnavailable) return;
+            google.maps.event.trigger(locationMap, 'resize');
+            if (locationDraft) locationMap.setCenter(locationDraft);
+          });
+          observer.observe($('#locationMap'));
+        })().catch(error => { locationMapPromise = null; throw error; });
+      }
+      await locationMapPromise;
     }
 
-    function openUbicacion(pedido) {
+    async function openUbicacion(pedido) {
       if (!pedido?.punto_entrega_id) {
         showToast('No se puede editar la ubicación: el pedido no tiene un punto de entrega asociado');
         return;
@@ -1223,29 +1253,32 @@
       $('#locationPedidoLabel').textContent = `Pedido #${pedido.id} · Punto de entrega #${pedido.punto_entrega_id}`;
       $('#locationClient').textContent = pedido.cliente || 'Cliente sin nombre';
       $('#locationAddress').textContent = locationAddressFor(pedido) || 'Sin dirección suficiente para geocodificar';
-      locationDialog.showModal();
+      const generation = ++locationOpenGeneration;
+      $('#btnAutoLocation').disabled = true;
+      $('#btnSaveLocation').disabled = true;
+      if (locationMarker) { locationMarker.map = null; locationMarker = null; }
+      if (!locationDialog.open) locationDialog.showModal();
       try {
-        ensureLocationMap();
-        setTimeout(() => {
-          locationMap.invalidateSize();
-          if (locationMarker) {
-            locationMap.removeLayer(locationMarker);
-            locationMarker = null;
-          }
-          if (hasValidCoordinates(pedido.latitud, pedido.longitud)) {
-            setLocationDraft(pedido.latitud, pedido.longitud, { center: true });
-            locationStatus.textContent = 'Ubicación guardada';
-          } else {
-            locationMap.setView([-32.5, -63.5], 5);
-          }
-        }, 0);
+        await ensureLocationMap();
+        if (generation !== locationOpenGeneration || !locationDialog.open) return;
+        google.maps.event.trigger(locationMap, 'resize');
+        if (hasValidCoordinates(pedido.latitud, pedido.longitud)) {
+          setLocationDraft(pedido.latitud, pedido.longitud, { center: true });
+          locationStatus.textContent = 'Ubicación guardada';
+        } else {
+          locationMap.setCenter({ lat: -32.5, lng: -63.5 });
+          locationMap.setZoom(5);
+        }
+        $('#btnAutoLocation').disabled = false;
+        $('#btnSaveLocation').disabled = false;
       } catch (error) {
-        locationError.textContent = error.message;
+        if (generation === locationOpenGeneration && locationDialog.open) locationError.textContent = error.message;
       }
     }
 
     async function geocodeLocation() {
-      if (!locationPedido) return;
+      if (!locationPedido || !locationMap || locationMapUnavailable) return;
+      const generation = locationOpenGeneration;
       if (!locationAddressFor(locationPedido)) {
         locationError.textContent = 'El punto de entrega no tiene una dirección suficiente para ubicar automáticamente.';
         return;
@@ -1267,15 +1300,16 @@
           body: JSON.stringify(body),
         });
         const data = await response.json().catch(() => ({}));
+        if (generation !== locationOpenGeneration || !locationDialog.open || locationMapUnavailable) return;
         if (!response.ok || !hasValidCoordinates(data.latitud, data.longitud)) {
           throw new Error(data.error || 'No se encontró una ubicación confiable para esa dirección.');
         }
         setLocationDraft(data.latitud, data.longitud, { center: true });
         locationStatus.textContent = 'Resultado automático por confirmar';
       } catch (error) {
-        locationError.textContent = error.message || 'No se pudo ubicar automáticamente.';
+        if (generation === locationOpenGeneration && locationDialog.open) locationError.textContent = error.message || 'No se pudo ubicar automáticamente.';
       } finally {
-        button.disabled = false;
+        if (generation === locationOpenGeneration) button.disabled = locationMapUnavailable;
       }
     }
 
@@ -1297,7 +1331,7 @@
         if (!response.ok) throw new Error(data.error || 'No se pudo guardar la ubicación.');
         locationDialog.close();
         showToast('Ubicación actualizada correctamente');
-        await reload();
+        await initLoad();
       } catch (error) {
         locationError.textContent = error.message || 'No se pudo guardar la ubicación.';
       } finally {
@@ -1675,6 +1709,7 @@
       if (!saveBusy) {
         applyFinalizedOrderControls({
           finalized: editingPedidoFinalizado,
+          allowReopen: editingPedidoAllowReopen,
           estado: $('#dlg_estado'),
           empresa: $('#dlg_empresa_id'),
           addItem: btnAddItem,
@@ -1695,6 +1730,7 @@
     $('#btnAutoLocation').onclick = geocodeLocation;
     $('#btnSaveLocation').onclick = saveLocation;
     locationDialog.addEventListener('cancel', () => { locationError.textContent = ''; });
+    locationDialog.addEventListener('close', () => { locationOpenGeneration++; });
 
     const dlgEmpresaSelect = document.getElementById('dlg_empresa_id');
     if (dlgEmpresaSelect) dlgEmpresaSelect.addEventListener('change', () => refreshRelationSelectsForDialogEmpresa());
@@ -2257,6 +2293,7 @@
       const editContext = pedidoEditCoordinator.begin({ id, finalized: isPedidoFinalizado(p.estado) });
       editingId = editContext.id;
       editingPedidoFinalizado = editContext.finalized;
+      editingPedidoAllowReopen = p.estado === 'cancelado' && ['admin', 'super'].includes(currentUser?.role);
       setModalBusy(true);
       resetPedidoEditView({
         notice: dlgFinalizedNotice,
@@ -2460,6 +2497,7 @@
 
       const savePlan = buildPedidoSavePlan({
         finalized: saveFinalized,
+        allowReopen: editingPedidoAllowReopen,
         items,
         estado: estadoVal,
         metodoPago: metodoVal,

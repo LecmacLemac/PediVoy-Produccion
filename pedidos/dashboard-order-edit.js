@@ -55,6 +55,7 @@ export function isPedidoFinalizado(estado) {
 
 export function buildPedidoSavePlan({
   finalized,
+  allowReopen = false,
   items,
   estado,
   metodoPago,
@@ -65,6 +66,7 @@ export function buildPedidoSavePlan({
   if (finalized) {
     return {
       pedidoBody: {
+        ...(allowReopen && estado === 'pendiente' ? { estado } : {}),
         metodo_pago: metodoPago,
         chofer_id: choferId,
         zona_id: zonaId,
@@ -85,13 +87,17 @@ export function buildPedidoSavePlan({
 
 export function applyFinalizedOrderControls({
   finalized,
+  allowReopen = false,
   estado,
   empresa,
   addItem,
   itemsBody,
   notice,
 }) {
-  estado.disabled = finalized;
+  estado.disabled = finalized && !allowReopen;
+  Array.from(estado.options || []).forEach(option => {
+    option.disabled = finalized && allowReopen && !['cancelado', 'pendiente'].includes(option.value);
+  });
   empresa.disabled = true;
   addItem.disabled = finalized;
   itemsBody.querySelectorAll('input, button').forEach((control) => {
@@ -99,6 +105,6 @@ export function applyFinalizedOrderControls({
   });
   notice.hidden = !finalized;
   notice.textContent = finalized
-    ? 'Los ítems quedan protegidos. Se permiten correcciones administrativas de método de pago, chofer y zona.'
+    ? 'Los ítems quedan protegidos. Se permiten correcciones administrativas de método de pago, chofer y zona.' + (allowReopen ? ' También podés reabrir este pedido cancelado como Pendiente.' : '')
     : '';
 }

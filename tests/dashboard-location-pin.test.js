@@ -22,11 +22,14 @@ test('dashboard-data expone identidad y ubicación del punto de entrega', async 
 test('dashboard ofrece pin editable manual y geocodificación automática', async () => {
   const html = await read('pedidos/dashboard.html');
 
-  assert.match(html, /leaflet(?:\.css|@1\.9\.4)/i);
+  assert.doesNotMatch(html, /leaflet|\bL\.(?:map|marker|tileLayer)/i);
+  assert.match(html, /dashboard-google-map\.js/);
   assert.match(html, /id="dlgUbicacion"/);
   assert.match(html, /id="locationMap"/);
   assert.match(html, /openUbicacion\(/);
-  assert.match(html, /locationMap\.on\(['"]click['"]/);
+  assert.match(html, /locationMap\.addListener\(['"]click['"]/);
+  assert.match(html, /AdvancedMarkerElement/);
+  assert.match(html, /gmpDraggable: true/);
   assert.match(html, /dragend/);
   assert.match(html, /\/api\/clientes\/geocode/);
   assert.match(html, /\/api\/clientes\/\$\{[^}]+\}/);

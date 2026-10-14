@@ -131,7 +131,7 @@ for (const superUser of [false, true]) {
 
 for (const superUser of [false, true]) {
   const role = superUser ? 'super' : 'admin';
-  for (const [field, value] of [['estado', 'pendiente'], ['empresa_id', 8]]) {
+  for (const [field, value] of [['estado', 'en_ruta'], ['empresa_id', 8]]) {
     test(`${role} rechaza cambiar ${field} de finalizado sin mutacion parcial`, async () => {
       const { handler, calls } = buildHandler({
         currentPedido: { id: 42, empresa_id: 7, estado: 'cancelado', monto: 0, punto_entrega_id: null },
