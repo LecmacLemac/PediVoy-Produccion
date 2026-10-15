@@ -19,8 +19,10 @@ test('pagos no ofrece force y envía tenant del comprobante solo para superadmin
 
 test('superadmin carga las cuentas del tenant del comprobante seleccionado', async () => {
   const source = await readFile(new URL('../pedidos/pagos.html', import.meta.url), 'utf8');
-  assert.match(source, /currentUser\?\.role[^\n]*super[^\n]*row\.empresa_id[\s\S]*await loadCuentasBancarias\(row\.empresa_id\)/);
-  assert.match(source, /loadCuentasBancarias\([^)]*empresaId/);
+  const review = source.slice(source.indexOf('async function verificarPago'), source.indexOf('async function asociarPedido'));
+  assert.match(review, /currentUser\?\.role[^\n]*super[^\n]*row\.empresa_id[^\n]*params\.set\('empresa_id', String\(row\.empresa_id\)\)/);
+  assert.match(review, /accounts\.filter\(c => Number\(c\.empresa_id\) === Number\(row\.empresa_id\)/);
+  assert.doesNotMatch(review, /await loadCuentasBancarias/); // panel loading must not rewrite main filters
 });
 
 test('rutas manuales validan el par operación/cuenta y lo pasan al servicio', async () => {
@@ -94,7 +96,7 @@ test('pagos trata outcome_unknown como reconciliación obligatoria y nunca como 
   for (const flow of [verify, association]) {
     assert.match(flow, /TRANSACTION_OUTCOME_UNKNOWN/);
     assert.match(flow, /outcome_unknown/);
-    assert.match(flow, /reconcili/i);
+    assert.match(flow, /concili/i);
   }
   assert.match(verify, /resp\.status\s*===\s*503/);
   assert.match(association, /response\.status\s*===\s*503/);

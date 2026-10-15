@@ -404,6 +404,9 @@ export function createTransferenciasRouter({
           ct.empresa_id,
           ct.fecha,
           COALESCE(NULLIF(ct.monto, 0), p.monto, 0) AS monto,
+          ct.monto AS monto_comprobante,
+          p.monto AS monto_pedido,
+          p.metodo_pago AS pedido_metodo_pago,
           COALESCE(ct.metodo_pago, p.metodo_pago, 'transferencia') AS metodo_pago,
           ct.comprobante_path,
           ct.pedido_id,
@@ -434,11 +437,11 @@ export function createTransferenciasRouter({
           pe.cliente,
           pe.telefono
         FROM comprobantes_transferencia ct
-        LEFT JOIN pedidos p           ON p.id = ct.pedido_id
-        LEFT JOIN puntos_entrega pe   ON pe.id = p.punto_entrega_id
-        LEFT JOIN zonas_geograficas z ON z.id = ct.zona_id
+        LEFT JOIN pedidos p           ON p.id = ct.pedido_id AND p.empresa_id = ct.empresa_id
+        LEFT JOIN puntos_entrega pe   ON pe.id = p.punto_entrega_id AND pe.empresa_id = ct.empresa_id
+        LEFT JOIN zonas_geograficas z ON z.id = ct.zona_id AND z.empresa_id = ct.empresa_id
         LEFT JOIN usuarios uv         ON uv.id = ct.verified_by
-        LEFT JOIN empresa_cuentas_bancarias cb ON cb.id = ct.cuenta_bancaria_id
+        LEFT JOIN empresa_cuentas_bancarias cb ON cb.id = ct.cuenta_bancaria_id AND cb.empresa_id = ct.empresa_id
         WHERE 1=1
       `;
 

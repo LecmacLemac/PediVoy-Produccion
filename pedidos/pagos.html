@@ -165,6 +165,50 @@
     .modal-body { padding: 0; background: #000; display: flex; justify-content: center; align-items: center; min-height: 400px; max-height: 70vh; }
     .modal-body img { max-width: 100%; max-height: 70vh; object-fit: contain; }
     
+    /* Unified transfer review: independent from table filters. */
+    .revision-dialog { padding:0; border:1px solid var(--border); border-radius:16px; background:var(--surface); color:var(--text); width:calc(100% - 32px); max-width:1120px; max-height:calc(100dvh - 32px); }
+    .revision-dialog [hidden] { display:none !important; }
+    .revision-dialog::backdrop { background:rgba(0,0,0,.8); backdrop-filter:blur(4px); }
+    .revision-shell { display:flex; flex-direction:column; height:min(850px,calc(100dvh - 34px)); min-height:0; }
+    .revision-header { position:static; display:flex; justify-content:space-between; align-items:center; padding:20px 24px; border-bottom:1px solid var(--border); flex-shrink:0; }
+    .revision-header h2 { font-size:1.2rem; margin:5px 0; color:#f1f5f9; }
+    .revision-header p, .revision-help { color:var(--text-muted); font-size:.82rem; line-height:1.5; margin:8px 0; overflow-wrap:anywhere; }
+    .revision-eyebrow { color:var(--text-muted); font-size:.68rem; letter-spacing:.12em; }
+    .revision-grid { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); min-height:0; flex:1; }
+    .revision-proof { padding:20px; background:rgba(0,0,0,.2); display:flex; flex-direction:column; min-width:0; min-height:0; }
+    .revision-proof-heading { display:flex; justify-content:space-between; gap:10px; font-size:.85rem; margin-bottom:14px; }
+    .revision-proof-heading a { color:#67e8f9; font-size:.75rem; }
+    #visorContainer { display:flex; align-items:center; justify-content:center; min-height:0; flex:1; overflow:auto; background:#101827; border:1px solid var(--border); border-radius:10px; }
+    #visorContainer img { width:100%; height:100%; object-fit:contain; }
+    #visorContainer iframe { width:100%; height:100%; min-height:260px; border:0; background:white; }
+    .revision-details { padding:20px 24px; overflow:auto; min-width:0; border-left:1px solid var(--border); }
+    .revision-amounts { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .revision-amounts div { border:1px solid var(--border); border-radius:10px; padding:14px; background:rgba(255,255,255,.025); min-width:0; }
+    .revision-amounts span { font-size:.75rem; color:var(--text-muted); display:block; margin-bottom:8px; }
+    .revision-amounts strong { font-size:1.3rem; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+    .revision-status { font-size:.83rem; line-height:1.5; padding:10px 12px; background:rgba(16,185,129,.08); border:1px solid var(--border); border-radius:8px; color:#6ee7b7; }
+    .revision-status.warning { color:#fcd34d; background:rgba(245,158,11,.08); }
+    #revisionCampos { border:0; padding:0; margin:0; min-width:0; }
+    #revisionCampos > label:not(.revision-confirm) { display:block; font-size:.82rem; margin:16px 0 7px; }
+    #revisionCampos input[type=text], #revisionCampos select, #revisionCampos textarea { box-sizing:border-box; width:100%; min-width:0; padding:11px; color:#f1f5f9; background:#0f172a; border:1px solid var(--border); border-radius:8px; font:inherit; font-size:.88rem; }
+    #revisionCampos textarea { resize:vertical; }
+    #revisionCampos :focus-visible, .revision-footer :focus-visible { outline:2px solid #67e8f9; outline-offset:2px; }
+    .revision-confirm { display:flex; align-items:flex-start; gap:10px; margin:18px 0; font-size:.83rem; line-height:1.5; }
+    .revision-confirm input { width:18px; min-width:18px; height:18px; flex:0 0 18px; margin:2px 0; }
+    .revision-footer { display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; padding:16px 24px; border-top:1px solid var(--border); flex-shrink:0; }
+    #revisionError { width:100%; color:#fca5a5; font-size:.85rem; line-height:1.5; overflow-wrap:anywhere; }
+    #revisionError:empty { display:none; }
+    .revision-dialog button:disabled { opacity:.5; cursor:not-allowed; }
+    @media(max-width:760px) {
+      .revision-dialog { width:calc(100% - 16px); max-height:calc(100dvh - 16px); }
+      .revision-shell { height:calc(100dvh - 18px); }
+      .revision-header, .revision-footer { padding:14px 16px; }
+      .revision-grid { display:block; overflow:auto; }
+      .revision-proof { padding:16px; }
+      #visorContainer { height:260px; flex:none; }
+      .revision-details { padding:16px; overflow:visible; border-left:0; border-top:1px solid var(--border); }
+    }
+
     /* TOAST */
     .toast { 
       position: fixed; bottom: 30px; right: 30px; background: #fff; color: #0f172a; 
@@ -322,21 +366,41 @@
 
 </main>
 
-<div id="modalVisor" class="modal-overlay" onclick="if(event.target===this) closeModal()">
-  <div class="modal-content">
-    <div class="modal-header">
-      <h3 style="margin:0; font-size:1.1rem"><i class="fa-solid fa-receipt"></i> Comprobante</h3>
-      <button class="btn btn-ghost btn-icon" onclick="closeModal()"><i class="fa-solid fa-xmark"></i></button>
+<dialog id="modalVisor" class="revision-dialog" aria-labelledby="revisionTitle" onclick="if(event.target===this) closeModal()">
+  <form id="revisionForm" class="revision-shell">
+    <header class="revision-header">
+      <div><span class="revision-eyebrow">TESORERÍA · TRANSFERENCIAS</span><h2 id="revisionTitle">Revisar y validar pago</h2><p id="revisionContexto"></p></div>
+      <button type="button" class="btn btn-ghost btn-icon" onclick="closeModal()" aria-label="Cerrar revisión">✕</button>
+    </header>
+    <div class="revision-grid">
+      <section class="revision-proof" aria-label="Comprobante adjunto">
+        <div class="revision-proof-heading"><strong>Comprobante</strong><a id="revisionAbrir" target="_blank" rel="noopener noreferrer" hidden>Abrir en otra pestaña ↗</a></div>
+        <div id="visorContainer"></div>
+      </section>
+      <section class="revision-details">
+        <div class="revision-amounts"><div><span>Importe del pedido</span><strong id="revisionMontoPedido"></strong></div><div><span>Importe del comprobante</span><strong id="revisionMontoComprobante"></strong></div></div>
+        <p id="revisionEstado" class="revision-status" role="status"></p>
+        <fieldset id="revisionCampos">
+          <label for="revisionCuenta">Cuenta receptora</label>
+          <select id="revisionCuenta" required><option value="">Cargando cuentas…</option></select>
+          <p id="revisionCuentaDetalle" class="revision-help"></p>
+          <label for="revisionOperacion">Número de operación bancaria</label>
+          <input id="revisionOperacion" type="text" maxlength="200" autocomplete="off" required placeholder="Ingresá el número que figura en el banco">
+          <label for="revisionMotivo">Motivo de la aprobación</label>
+          <textarea id="revisionMotivo" rows="3" maxlength="1000" required></textarea>
+          <label class="revision-confirm"><input id="revisionConfirmo" type="checkbox" required><span>Confirmo que revisé el comprobante y que el dinero ingresó a la cuenta seleccionada.</span></label>
+        </fieldset>
+        <p id="revisionAuditoria" class="revision-help"></p>
+        <p class="revision-help">La validación es manual: el sistema no consulta al banco. Esta acción no envía avisos al cliente.</p>
+      </section>
     </div>
-    <div class="modal-body" id="visorContainer"></div>
-    <div style="padding:15px; display:flex; justify-content:center; gap:10px; background:var(--surface);">
-      <button class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
-      <button class="btn btn-primary" id="btnVerificarModal" onclick="verificarDesdeModal()">
-        <i class="fa-solid fa-check-double"></i> Validar Pago
-      </button>
-    </div>
-  </div>
-</div>
+    <footer class="revision-footer">
+      <div id="revisionError" role="alert" tabindex="-1"></div>
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
+      <button type="submit" class="btn btn-primary" id="btnVerificarModal" disabled>Validar pago</button>
+    </footer>
+  </form>
+</dialog>
 
 <div id="toast" class="toast"><i class="fa-solid fa-circle-check"></i> <span>Acción realizada</span></div>
 
@@ -740,7 +804,7 @@
               ${esQr ? `<span class="text-sub">Creado: ${esc(fmtDateTime(t.created_at))}</span>` : ''}
             </div>
           </td>
-          <td style="text-align:center">${t.comprobante_path ? `<button class="btn btn-ghost btn-icon" onclick='verComprobante(${JSON.stringify(String(t.comprobante_path || ''))}, ${Number(t.id)}, ${isValidado})'><i class="fa-regular fa-eye"></i></button>` : (esSinComprobante ? '<span class="text-sub">Sin adjuntar</span>' : '-')}</td>
+          <td style="text-align:center">${t.comprobante_path ? `<button class="btn btn-ghost btn-icon" onclick="verComprobante(null, ${Number(t.id)}, ${isValidado})"><i class="fa-regular fa-eye"></i></button>` : (esSinComprobante ? '<span class="text-sub">Sin adjuntar</span>' : '-')}</td>
           <td>${statusBadge(t, isValidado)}</td>
           <td style="text-align:right">
             ${btnSolicitar}
@@ -754,88 +818,195 @@
   }
 
 // --- Funciones del Modal y Acciones ---
-  function verComprobante(path, id, isValidado) {
-    const container = $('#visorContainer');
-    const ext = path.split('.').pop().toLowerCase();
-    
-    if(ext === 'pdf') {
-      container.innerHTML = `<iframe src="${path}" style="width:100%; height:100%; border:none;"></iframe>`;
-    } else {
-      container.innerHTML = `<img src="${path}" alt="Comprobante" />`;
-    }
+  let revisionState = null;
+  let revisionGeneration = 0;
+  let revisionReturnFocus = null;
+  const revisionUnknownIds = new Set();
 
-    currentTransferenciaId = id;
-    $('#btnVerificarModal').style.display = isValidado ? 'none' : 'inline-flex';
-    $('#modalVisor').style.display = 'flex';
+  function revisionBlockKey(row) {
+    return `pagos:revision:${currentUser?.uid || currentUser?.id || ''}:${row.empresa_id}:${row.id}`;
   }
 
+  function revisionIsBlocked(row) {
+    const key = revisionBlockKey(row);
+    try { return revisionUnknownIds.has(key) || sessionStorage.getItem(key) === '1'; }
+    catch { return revisionUnknownIds.has(key); }
+  }
+
+  function blockRevision(row) {
+    const key = revisionBlockKey(row);
+    revisionUnknownIds.add(key);
+    try { sessionStorage.setItem(key, '1'); } catch {}
+  }
+
+  function revisionErrorMessage(code) {
+    const messages = {
+      operacion_duplicada: 'El número de operación ya está registrado en otro comprobante. Revisalo antes de continuar.',
+      monto_no_coincide: 'El importe del comprobante no coincide con el pedido. Requiere revisión manual.',
+      cuenta_destino_no_verificada: 'La cuenta receptora no está activa o no pertenece a esta empresa.',
+      cuenta_bancaria_faltante: 'Seleccioná la cuenta receptora.',
+      numero_operacion_faltante: 'Ingresá el número de operación bancaria.',
+      numero_operacion_invalido: 'El número de operación no es válido.',
+      reemplazo_datos_no_permitido: 'No se pueden reemplazar la operación o la cuenta ya registradas desde esta aprobación.',
+      pedido_ya_tiene_comprobante_aprobado: 'El pedido ya tiene otro comprobante aprobado.',
+      pago_ya_acreditado: 'El pedido ya tiene un pago acreditado. No vuelvas a validarlo.',
+      estado_comprobante_no_elegible: 'El comprobante ya fue procesado o no admite aprobación. Actualizá el listado.',
+      metodo_pago_no_transferencia: 'El método de pago del pedido no es transferencia.',
+      tenant_no_coincide: 'El comprobante y el pedido no pertenecen a la misma empresa.',
+      comprobante_no_encontrado: 'No se encontró el comprobante o no tenés permiso para revisarlo.',
+      pedido_no_asociado: 'Primero asociá el comprobante al pedido correspondiente.',
+    };
+    return messages[code] || 'No se pudo aprobar el pago. Revisá los datos y actualizá el listado.';
+  }
+
+  function renderRevisionReceipt(path) {
+    const container = $('#visorContainer'), link = $('#revisionAbrir');
+    container.replaceChildren(); link.hidden = true; link.removeAttribute('href');
+    try {
+      if (!path) throw new Error('missing');
+      const url = new URL(String(path), location.href);
+      if (!['https:', 'http:'].includes(url.protocol)) throw new Error('invalid');
+      const pdf = url.pathname.toLowerCase().endsWith('.pdf');
+      const node = document.createElement(pdf ? 'iframe' : 'img');
+      node.setAttribute('referrerpolicy', 'no-referrer');
+      if (pdf) { node.title = 'Comprobante PDF'; }
+      else node.alt = 'Comprobante de la transferencia';
+      node.src = url.href;
+      node.addEventListener('error', () => { container.textContent = 'No se pudo mostrar el comprobante. Podés abrirlo en otra pestaña.'; });
+      container.appendChild(node);
+      link.href = url.href; link.hidden = false;
+    } catch { container.textContent = 'Sin comprobante adjunto disponible para visualizar.'; }
+  }
+
+  function updateRevisionControls() {
+    const state = revisionState;
+    if (!state) return;
+    const blocked = revisionIsBlocked(state.row);
+    $('#revisionCampos').disabled = verifyBusy || !state.ready || !state.editable || blocked;
+    $('#revisionOperacion').readOnly = !!state.row.nro_operacion;
+    $('#revisionCuenta').disabled = !!state.row.cuenta_bancaria_id;
+    const account = state.accounts.find(c => Number(c.id) === Number($('#revisionCuenta').value));
+    $('#revisionCuentaDetalle').textContent = account
+      ? [account.titular, account.alias ? `Alias: ${account.alias}` : '', account.cbu ? `CBU/CVU: ${account.cbu}` : ''].filter(Boolean).join(' · ')
+      : state.ready ? 'Elegí una cuenta activa de la empresa de este comprobante.' : 'Cargando cuentas de la empresa…';
+    $('#btnVerificarModal').hidden = !state.editable;
+    $('#btnVerificarModal').disabled = verifyBusy || !state.ready || !state.editable || blocked || !state.amountsMatch
+      || !account || !$('#revisionOperacion').value.trim() || !$('#revisionMotivo').value.trim() || !$('#revisionConfirmo').checked;
+    $('#btnVerificarModal').textContent = verifyBusy ? 'Validando…' : 'Validar pago';
+  }
+
+  function verComprobante(_path, id, _isValidado) { return verificarPago(id); }
+
   function closeModal() {
-    $('#modalVisor').style.display = 'none';
-    $('#visorContainer').innerHTML = '';
+    if (verifyBusy) return;
+    revisionGeneration++;
+    $('#modalVisor').close();
+    $('#visorContainer').replaceChildren();
     currentTransferenciaId = null;
+    revisionState = null;
+    revisionReturnFocus?.focus?.({ preventScroll: true });
   }
 
   async function verificarPago(id) {
     if (verifyBusy) return;
     const row = currentRows.find(item => item.source === 'transferencia' && Number(item.id) === Number(id)) || {};
-    if (String(currentUser?.role || '').toLowerCase() === 'super' && row.empresa_id) {
-      await loadCuentasBancarias(row.empresa_id);
-    }
-    const nroOperacion = (prompt('Número de operación bancaria:', row.nro_operacion || '') || '').trim();
-    if (!nroOperacion) return alert('Se requiere el número de operación.');
-    const cuentaBancariaId = Number(prompt('ID de la cuenta bancaria receptora:', row.cuenta_bancaria_id || $('#fCuenta')?.value || '') || 0);
-    if (!Number.isInteger(cuentaBancariaId) || cuentaBancariaId <= 0) return alert('Se requiere una cuenta bancaria válida.');
-    const reason = (prompt('Motivo de la revisión:', 'Revisión manual de tesorería') || '').trim();
-    if (!reason) return alert('Se requiere un motivo de revisión.');
-    if(!confirm('¿Confirmar que el dinero ingresó a la cuenta?')) return;
-    const enviarAviso = confirm('¿Querés enviarle el aviso de pago registrado al cliente por WhatsApp?');
-
-    verifyBusy = true;
-    const btn = document.getElementById('btnVerificarModal');
-    const prev = btn ? btn.innerHTML : '';
-    if (btn) {
-      btn.disabled = true;
-      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Validando...';
-    }
-
+    if (!row.id) return toast('No se encontró el comprobante en el listado. Actualizá e intentá nuevamente.');
+    const generation = ++revisionGeneration;
+    const receiptAmount = row.monto_comprobante == null ? NaN : Number(row.monto_comprobante);
+    const orderAmount = row.monto_pedido == null ? NaN : Number(row.monto_pedido);
+    const amountsMatch = Number.isFinite(receiptAmount) && Number.isFinite(orderAmount) && Math.abs(receiptAmount - orderAmount) <= 0.010000001;
+    const role = currentUser?.role;
+    const validTenant = Number.isSafeInteger(Number(row.empresa_id)) && Number(row.empresa_id) > 0
+      && (role === 'super' || (role === 'admin' && Number(row.empresa_id) === Number(currentUser.empresa_id)));
+    const approved = Number(row.validado) === 1 || row.is_validado;
+    const editable = !!row.pedido_id && !approved && ['pendiente', 'en_revision'].includes(row.estado_revision || 'pendiente') && validTenant;
+    revisionState = { row: { ...row }, generation, editable, ready: false, amountsMatch, accounts: [] };
+    currentTransferenciaId = Number(row.id);
+    revisionReturnFocus = document.activeElement;
+    $('#revisionContexto').textContent = `${row.cliente || 'Cliente sin nombre'} · Pedido #${row.pedido_id || 'sin asociar'} · Empresa ${row.empresa_id || 'sin asignar'}`;
+    $('#revisionMontoPedido').textContent = Number.isFinite(orderAmount) ? money(orderAmount) : 'No disponible';
+    $('#revisionMontoComprobante').textContent = Number.isFinite(receiptAmount) ? money(receiptAmount) : 'No disponible';
+    $('#revisionEstado').textContent = approved ? 'Pago ya validado · solo consulta.' : !row.pedido_id ? 'Comprobante sin pedido asociado.'
+      : amountsMatch ? 'Los importes coinciden. Revisá el ingreso en tu banco antes de aprobar.' : 'Los importes no coinciden o no están disponibles. Requiere revisión manual.';
+    $('#revisionEstado').classList.toggle('warning', !amountsMatch && !approved);
+    $('#revisionOperacion').value = row.nro_operacion || '';
+    $('#revisionMotivo').value = approved ? row.verified_reason || '' : 'Revisión manual de tesorería';
+    $('#revisionConfirmo').checked = false;
+    $('#revisionCuenta').innerHTML = '<option value="">Cargando cuentas…</option>';
+    $('#revisionError').textContent = revisionIsBlocked(row) ? 'Resultado pendiente de conciliación manual. No repitas esta validación.' : '';
+    $('#revisionAuditoria').textContent = row.verified_at
+      ? `Revisado por ${row.verified_by_username || row.verified_by || 'administración'} · ${fmtDateTime(row.verified_at)}`
+      : `La aprobación quedará registrada a nombre de ${currentUser?.username || 'tu usuario'}, con fecha y motivo.`;
+    renderRevisionReceipt(row.comprobante_path);
+    updateRevisionControls();
+    if (!$('#modalVisor').open) $('#modalVisor').showModal();
     try {
-      const params = new URLSearchParams({ enviarAviso: enviarAviso ? '1' : '0' });
-      const payload = {
-        nro_operacion: nroOperacion,
-        cuenta_bancaria_id: cuentaBancariaId,
-        reason,
-      };
-      if (String(currentUser?.role || '').toLowerCase() === 'super' && row.empresa_id) {
-        payload.empresa_id = Number(row.empresa_id);
+      const params = new URLSearchParams();
+      if (currentUser?.role === 'super' && row.empresa_id) params.set('empresa_id', String(row.empresa_id));
+      const response = await authFetch('/api/transferencias/cuentas-bancarias' + (params.size ? '?' + params.toString() : ''), { cache: 'no-store' });
+      if (!response.ok) throw new Error('No se pudieron cargar las cuentas receptoras. Cerrá el panel e intentá nuevamente.');
+      const accounts = await response.json();
+      if (!Array.isArray(accounts)) throw new Error('La respuesta de cuentas no es válida.');
+      if (revisionState?.generation !== generation) return;
+      revisionState.accounts = accounts.filter(c => Number(c.empresa_id) === Number(row.empresa_id) && c.activa !== false);
+      const options = revisionState.accounts.map(c => `<option value="${Number(c.id)}">${esc(cuentaLabel(c))}</option>`);
+      $('#revisionCuenta').innerHTML = '<option value="">Seleccioná la cuenta receptora</option>' + options.join('');
+      if (row.cuenta_bancaria_id) {
+        const registered = revisionState.accounts.some(c => Number(c.id) === Number(row.cuenta_bancaria_id));
+        if (!registered) $('#revisionCuenta').add(new Option('Cuenta registrada no disponible / inactiva', String(row.cuenta_bancaria_id)));
+        $('#revisionCuenta').value = String(row.cuenta_bancaria_id);
+        if (!registered && editable) $('#revisionError').textContent = 'La cuenta registrada no está disponible para aprobar. Revisá su configuración; no puede reemplazarse desde este panel.';
       }
-      const resp = await authFetch(`/api/transferencias/${id}/verificar?${params.toString()}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await resp.json().catch(() => ({}));
-
-      if (resp.ok && data?.ok) {
-        toast(enviarAviso ? 'Pago verificado y aviso enviado' : 'Pago verificado sin aviso al cliente');
-        loadPagos();
-        closeModal();
-      } else if (resp.status === 503 && data?.code === 'TRANSACTION_OUTCOME_UNKNOWN' && data?.status === 'outcome_unknown') {
-        alert('⚠️ No se pudo confirmar el resultado. No reintentes: el pago requiere reconciliación manual.');
-        loadPagos();
-      } else if (resp.status === 409 && data?.needsReview) {
-        alert(`⚠️ Este comprobante requiere revisión manual.\n\n${data.detail || 'Monto no coincide con pedido.'}`);
-        loadPagos();
-      } else {
-        alert(data?.error || 'Error al verificar pago');
-      }
-    } finally {
-      verifyBusy = false;
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = prev;
-      }
+      revisionState.ready = true;
+      updateRevisionControls();
+    } catch (error) {
+      if (revisionState?.generation === generation) { $('#revisionError').textContent = error.message; updateRevisionControls(); }
     }
   }
+
+  async function aprobarRevisionPago() {
+    if (verifyBusy || !revisionState) return;
+    updateRevisionControls();
+    if ($('#btnVerificarModal').disabled || $('#btnVerificarModal').hidden || !$('#revisionForm').reportValidity()) return;
+    const state = revisionState, row = state.row;
+    const nroOperacion = $('#revisionOperacion').value.trim();
+    const cuentaBancariaId = Number($('#revisionCuenta').value);
+    const reason = $('#revisionMotivo').value.trim();
+    const payload = { nro_operacion: nroOperacion, cuenta_bancaria_id: cuentaBancariaId, reason };
+    if (currentUser?.role === 'super' && row.empresa_id) payload.empresa_id = Number(row.empresa_id);
+    verifyBusy = true;
+    $('#revisionError').textContent = '';
+    updateRevisionControls();
+    let success = false;
+    try {
+      const resp = await authFetch(`/api/transferencias/${row.id}/verificar?enviarAviso=0`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok && data?.ok) {
+        success = true;
+        toast('Pago validado. No se envió aviso al cliente.');
+      } else if ((resp.status === 503 && data?.code === 'TRANSACTION_OUTCOME_UNKNOWN' && data?.status === 'outcome_unknown') || resp.ok) {
+        blockRevision(row);
+        $('#revisionError').textContent = 'No se pudo confirmar el resultado. No reintentes: requiere conciliación manual.';
+      } else {
+        $('#revisionError').textContent = revisionErrorMessage(data?.reason || data?.error);
+      }
+    } catch {
+      blockRevision(row);
+      $('#revisionError').textContent = 'Se perdió la conexión y no se pudo confirmar el resultado. No reintentes: requiere conciliación manual.';
+    } finally {
+      verifyBusy = false;
+      if (revisionState === state) updateRevisionControls();
+    }
+    if (success) { closeModal(); await loadPagos(); }
+    else $('#revisionError').focus({ preventScroll: true });
+  }
+
+  $('#revisionForm').addEventListener('submit', event => { event.preventDefault(); void aprobarRevisionPago(); });
+  $('#revisionForm').addEventListener('input', updateRevisionControls);
+  $('#revisionForm').addEventListener('change', updateRevisionControls);
+  $('#modalVisor').addEventListener('cancel', event => { event.preventDefault(); closeModal(); });
 
   async function asociarPedido(id) {
     const pedidoId = Number(prompt('ID del pedido al que corresponde este comprobante:', '') || 0);
@@ -910,7 +1081,7 @@
   }
 
   function verificarDesdeModal() {
-    if(currentTransferenciaId) verificarPago(currentTransferenciaId);
+    return aprobarRevisionPago();
   }
 
   function csvCell(v) {
