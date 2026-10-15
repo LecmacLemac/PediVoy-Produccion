@@ -325,7 +325,7 @@ test('la reactivación automática espera a que los pedidos estén cargados y se
 test('todos los enlaces del menú tienen destinos alcanzables por teclado', () => {
   const links = [...html.matchAll(/<a\b[^>]*class="nav-link"[^>]*>/g)].map(m => m[0]);
   const agentLinks = links.filter(link => /href="\/pedidos\/mi-agente\.html"/.test(link));
-  assert.equal(agentLinks.length, 1);
+  assert.equal(agentLinks.length, 0, 'Mi agente sólo se configura desde Configuración Inicial');
   assert.ok(fs.existsSync(new URL('../pedidos/mi-agente.html', import.meta.url)));
   const panelLinks = links.filter(link => !agentLinks.includes(link));
   assert.equal(panelLinks.length, 8);
