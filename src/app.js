@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 
 import { registerLandingRoutes } from './routes/landingRoutes.js';
 import { mountApiModules } from './routes/mountApiModules.js';
+import { personalAgentHttpBoundary } from './agents/httpBoundary.js';
 import { createPublicLegacyPedidosRouter } from './routes/publicLegacyPedidos.js';
 import { createPublicLegacyCatalogRouter } from './routes/publicLegacyCatalog.js';
 import { createPublicLegacyMarketplaceRouter } from './routes/publicLegacyMarketplace.js';
@@ -168,6 +169,8 @@ export function createApp(deps) {
     return cb(null, true);
   };
 
+  // Personal credentials must not inherit the legacy credentialed CORS policy.
+  app.use(personalAgentHttpBoundary({ canonicalOrigin: deps?.agentCanonicalOrigin ?? process.env.AGENT_CANONICAL_ORIGIN ?? '' }));
   app.use(cors({ origin: corsOrigin, credentials: true }));
   // Run the mutation guard before any body parser so rejected requests do no body work.
   app.use('/api/admin/whatsapp-cloud', whatsappCloudInboxMutationGuard());
@@ -373,6 +376,8 @@ export function createApp(deps) {
     TRANSF_DIR,
     GASTOS_DIR,
     getEmpresaById: deps?.getEmpresaById,
+    personalAgentsEnabled: deps?.personalAgentsEnabled,
+    agentCanonicalOrigin: deps?.agentCanonicalOrigin,
   });
 
   // Endpoints públicos migrados a módulos dedicados

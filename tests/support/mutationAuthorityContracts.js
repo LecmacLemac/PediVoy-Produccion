@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { runPersonalAgentAuthorityHarness, personalAuthoritySourceHash } from './personalAgentAuthorityHarnessRunner.js';
 
 const OWNERSHIP_CASES = new Set([
   'src/routes/gastos.js|POST|/',
@@ -399,7 +400,43 @@ export function publicAuthorityContract({ root, caseId, endpointKey, row, eviden
     results: { matchedRules: required.length } });
 }
 
+const PERSONAL_CASES = new Map([
+  ['src/routes/miAgente.js|POST|/connections', 'usuario_propio'],
+  ['src/routes/miAgente.js|POST|/connections/:id/revoke', 'usuario_propio'],
+  ['src/routes/agentTools.js|POST|/tools/:name', 'agente_personal_capability'],
+]);
+
+export function validatePersonalAgentAuthorityProof(proof, { root, caseId, endpointKey, classification }) {
+  if (!root || !PERSONAL_CASES.has(caseId) || caseId !== endpointKey || PERSONAL_CASES.get(caseId) !== classification) return false;
+  if (!proof || proof.schema !== 1 || proof.caseId !== caseId || proof.endpointKey !== endpointKey
+    || proof.testCase !== `executed:${caseId}:personal-router-postgres`) return false;
+  try {
+    const executed = runPersonalAgentAuthorityHarness(root);
+    if (proof.results?.sourceHash !== personalAuthoritySourceHash(root)
+      || JSON.stringify(proof.results) !== JSON.stringify(executed.results)
+      || JSON.stringify(proof.assertions) !== JSON.stringify(executed.assertions)) return false;
+    return proof.hash === crypto.createHash('sha256').update(proofPayload(proof)).digest('hex');
+  } catch { return false; }
+}
+
+export function personalAgentAuthorityContract({ root, caseId, endpointKey, classification, row }) {
+  if (!root || !PERSONAL_CASES.has(caseId) || caseId !== endpointKey
+    || PERSONAL_CASES.get(caseId) !== classification
+    || `${row?.source}|${row?.method}|${row?.path}` !== endpointKey) {
+    return result(false, 'personal authority case/clasificación no corresponde al endpoint exacto', '');
+  }
+  try {
+    const harness = runPersonalAgentAuthorityHarness(root);
+    const proof = createAuthorityProof({caseId,endpointKey,testCase:`executed:${caseId}:personal-router-postgres`,...harness});
+    if (!validatePersonalAgentAuthorityProof(proof,{root,caseId,endpointKey,classification})) return result(false,'proof personal inválido','');
+    return result(true,'',`executed:${caseId}:${proof.hash.slice(0,12)}`,proof);
+  } catch {
+    return result(false,'harness real personal router/PostgreSQL falló o no ejecutó todas las pruebas sin skips','');
+  }
+}
+
 export const authorityContractRegistry = Object.freeze({
   ownershipAuthorityContract,
   publicAuthorityContract,
+  personalAgentAuthorityContract,
 });

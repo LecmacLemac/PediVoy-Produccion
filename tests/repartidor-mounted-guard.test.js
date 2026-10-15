@@ -42,7 +42,7 @@ function buildRouters(identity, counters) {
 }
 
 const expectedRoutes = [
-  'GET /resumen-dia', 'GET /pago-dia', 'GET /transferencias', 'GET /pedidos',
+  'GET /resumen-dia', 'GET /pago-dia', 'GET /maps-config', 'GET /transferencias', 'GET /pedidos',
   'POST /pedidos/:id/pago-qr', 'GET /pedidos/:id/pago-qr/estado',
   'POST /pedidos/:id/transferencia/notificar', 'GET /mis-zonas', 'GET /entregas-evidencias',
   'GET /stock-acumulado', 'PUT /pedidos/:id', 'POST /pedidos/:id/entregar',

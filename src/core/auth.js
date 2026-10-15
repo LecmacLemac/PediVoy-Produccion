@@ -5,6 +5,29 @@ import { query as defaultQuery } from '../db.js';
 const JWT_SECRET = process.env.JWT_SECRET || cfg.jwtSecret || 'dev-secret';
 const USER_ROLES = new Set(['user', 'repartidor', 'referente', 'facturacion', 'contable', 'admin', 'super']);
 
+export async function loadCanonicalIdentity(uid, { query = defaultQuery } = {}) {
+  if (!Number.isSafeInteger(uid) || uid <= 0) return null;
+  const rows = await query(
+    `SELECT u.id, u.username, u.role, u.empresa_id, u.chofer_id, u.referente_id, u.activo,
+            (c.id IS NOT NULL AND c.activo IS TRUE AND c.empresa_id = u.empresa_id) AS chofer_valid,
+            (r.id IS NOT NULL AND r.activo IS TRUE AND r.deleted_at IS NULL AND r.empresa_id = u.empresa_id) AS referente_valid
+       FROM usuarios u
+       LEFT JOIN choferes c ON c.id = u.chofer_id
+       LEFT JOIN referentes r ON r.id = u.referente_id WHERE u.id = $1 LIMIT 1`, [uid]);
+  const user = rows?.[0];
+  if (!user || user.activo !== true || !USER_ROLES.has(user.role)) return null;
+  const positiveId = value => Number.isSafeInteger(value) && value > 0;
+  const tenant = user.role === 'super' ? user.empresa_id === null : positiveId(user.empresa_id);
+  const links = user.role === 'repartidor'
+    ? positiveId(user.chofer_id) && user.referente_id === null && user.chofer_valid === true
+    : user.role === 'referente'
+      ? positiveId(user.referente_id) && user.chofer_id === null && user.referente_valid === true
+      : user.chofer_id === null && user.referente_id === null;
+  if (!tenant || !links) return null;
+  return { uid: user.id, username: user.username ?? null, role: user.role, empresa_id: user.empresa_id,
+    chofer_id: user.chofer_id ?? null, referente_id: user.referente_id ?? null };
+}
+
 export function createWithAuth({ queryFn = defaultQuery, jwtSecret = JWT_SECRET } = {}) {
   return async function withAuth(req, res, next) {
     try {
@@ -20,40 +43,9 @@ export function createWithAuth({ queryFn = defaultQuery, jwtSecret = JWT_SECRET 
       if (claims.type !== undefined || !Number.isSafeInteger(claims.uid) || claims.uid <= 0 || !USER_ROLES.has(claims.role)) {
         return res.status(401).json({ error: 'Token inválido' });
       }
-      const rows = await queryFn(
-        `SELECT u.id, u.username, u.role, u.empresa_id, u.chofer_id, u.referente_id, u.activo,
-                (c.id IS NOT NULL AND c.activo IS TRUE AND c.empresa_id = u.empresa_id) AS chofer_valid,
-                (r.id IS NOT NULL AND r.activo IS TRUE AND r.deleted_at IS NULL
-                 AND r.empresa_id = u.empresa_id) AS referente_valid
-           FROM usuarios u
-           LEFT JOIN choferes c ON c.id = u.chofer_id
-           LEFT JOIN referentes r ON r.id = u.referente_id
-          WHERE u.id = $1 LIMIT 1`,
-        [claims.uid]
-      );
-      const user = rows?.[0];
-      if (!user || user.activo !== true || !USER_ROLES.has(user.role)) {
-        return res.status(401).json({ error: 'Token inválido' });
-      }
-      const validTenant = user.role === 'super'
-        ? user.empresa_id === null
-        : Number.isSafeInteger(user.empresa_id) && user.empresa_id > 0;
-      const positiveId = value => Number.isSafeInteger(value) && value > 0;
-      const validLinks = user.role === 'repartidor'
-        ? positiveId(user.chofer_id) && user.referente_id === null && user.chofer_valid === true
-        : user.role === 'referente'
-          ? positiveId(user.referente_id) && user.chofer_id === null && user.referente_valid === true
-          : user.chofer_id === null && user.referente_id === null;
-      if (!validTenant || !validLinks) return res.status(401).json({ error: 'Token inválido' });
-      req.user = {
-        ...claims,
-        uid: user.id,
-        username: user.username ?? null,
-        role: user.role,
-        empresa_id: user.empresa_id,
-        chofer_id: user.chofer_id ?? null,
-        referente_id: user.referente_id ?? null,
-      };
+      const user = await loadCanonicalIdentity(claims.uid, { query: queryFn });
+      if (!user) return res.status(401).json({ error: 'Token inválido' });
+      req.user = { ...claims, ...user };
     } catch {
       return res.status(401).json({ error: 'Token inválido' });
     }

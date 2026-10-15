@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { authorityContractRegistry, validateAuthorityProof } from './mutationAuthorityContracts.js';
+import { authorityContractRegistry, validateAuthorityProof, validatePersonalAgentAuthorityProof } from './mutationAuthorityContracts.js';
 
 const MUTATION_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 
@@ -894,6 +894,10 @@ function executeAuthorityContract({ root, item, endpointKey, row, evidence, midd
   if (metadata.module !== 'tests/support/mutationAuthorityContracts.js') {
     return { ok: false, reason: `módulo de evidencia no registrado: ${metadata.module}`, marker: '' };
   }
+  const personal = ['usuario_propio', 'agente_personal_capability'].includes(item.classification);
+  if (personal && metadata.export !== 'personalAgentAuthorityContract') {
+    return { ok: false, reason: 'authorityEvidence personal requiere contrato exacto', marker: '' };
+  }
   const contract = authorityContractRegistry[metadata.export];
   if (typeof contract !== 'function') {
     return { ok: false, reason: `export de evidencia no registrado: ${metadata.export}`, marker: '' };
@@ -912,6 +916,9 @@ function executeAuthorityContract({ root, item, endpointKey, row, evidence, midd
     && !validateAuthorityProof(outcome.proof, { caseId: metadata.case, endpointKey })) {
     return { ok: false, reason: 'proof público missing/malformed o de endpoint distinto', marker: '' };
   }
+  if (personal && outcome.ok && !validatePersonalAgentAuthorityProof(outcome.proof, {
+    root, caseId: metadata.case, endpointKey, classification: item.classification,
+  })) return { ok: false, reason: 'proof personal missing/malformed o de endpoint distinto', marker: '' };
   return outcome;
 }
 
@@ -939,6 +946,8 @@ export function deriveAuthorityEvidence({ root, actual, inventory }) {
         ok = hasAdminEvidence(row, text);
         marker = 'withAuth->canonical-admin-guard@applicable-chain';
         break;
+      case 'usuario_propio':
+      case 'agente_personal_capability':
       case 'publico_capability_explicita': {
         const contract = executeAuthorityContract({
           root,

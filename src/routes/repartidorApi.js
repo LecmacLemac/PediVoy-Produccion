@@ -23,6 +23,27 @@ import {
 import { lockDeliveryPointRows } from '../services/deliveryPointIdentity.js';
 import { lockStockContext } from '../services/stockLocking.js';
 
+// Shared canonical claim primitive. Caller owns the transaction and its audit.
+export async function takeVacantPedido(txQuery, { pedidoId, empresaId, choferId }) {
+  const pedidoRows = await txQuery(
+    `SELECT id FROM pedidos
+      WHERE id = $1 AND empresa_id = $2 AND chofer_id IS NULL AND estado = 'pendiente'
+      FOR UPDATE`, [pedidoId, empresaId]
+  );
+  if (pedidoRows.length !== 1) return 'unavailable';
+  const choferRows = await txQuery(
+    `SELECT id FROM choferes
+      WHERE id = $1 AND empresa_id = $2 AND activo IS TRUE FOR SHARE`, [choferId, empresaId]
+  );
+  if (choferRows.length !== 1) return 'invalid-driver';
+  const result = await txQuery(
+    `UPDATE pedidos SET chofer_id = $1
+      WHERE id = $2 AND empresa_id = $3 AND chofer_id IS NULL AND estado = 'pendiente'
+      RETURNING id`, [choferId, pedidoId, empresaId]
+  );
+  return result.length === 1 ? 'taken' : 'unavailable';
+}
+
 export function createRepartidorApiRouter(deps) {
   const { query, pool, withTransaction, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, ejecutarPostEntregaUpsell, ejecutarRecompensaReferido, ejecutarEstrategiaReferidos, awardPointsForDeliveredOrder = awardPointsForDeliveredOrderDefault, generateComisionesForDeliveredOrder = generateComisionesForDeliveredOrderDefault, resolveProductIdentityItems = resolveProductIdentityItemsDefault, registrarMovimientosActivosDesdePedido, crearPagoParaPedido = crearPagoParaPedidoDefault, listarPagosPorPedido = listarPagosPorPedidoDefault, refrescarEstadoPagoPedido = refrescarEstadoPagoPedidoDefault } = deps || {};
   if (typeof query !== 'function') throw new Error('createRepartidorApiRouter: falta query(fn)');
@@ -1987,43 +2008,10 @@ export function createRepartidorApiRouter(deps) {
        throw new Error('Transacción no disponible');
      }
 
-     const outcome = await withTransaction(async txQuery => {
-       // Orden global en flujos repartidor: pedido -> chofer -> punto/zona.
-       const pedidoRows = await txQuery(
-         `SELECT id
-            FROM pedidos
-           WHERE id = $1
-             AND empresa_id = $2
-             AND chofer_id IS NULL
-             AND estado = 'pendiente'
-           FOR UPDATE`,
-         [pedidoId, empresaId]
-       );
-       if (pedidoRows.length !== 1) return 'unavailable';
-
-       const choferRows = await txQuery(
-         `SELECT id
-            FROM choferes
-           WHERE id = $1
-             AND empresa_id = $2
-             AND activo IS TRUE
-           FOR SHARE`,
-         [choferId, empresaId]
-       );
-       if (choferRows.length !== 1) return 'invalid-driver';
-
-       const result = await txQuery(
-         `UPDATE pedidos
-             SET chofer_id = $1
-           WHERE id = $2
-             AND empresa_id = $3
-             AND chofer_id IS NULL
-             AND estado = 'pendiente'
-         RETURNING id`,
-         [choferId, pedidoId, empresaId]
-       );
-       return result.length === 1 ? 'taken' : 'unavailable';
-     });
+     // Orden global en flujos repartidor: pedido -> chofer -> punto/zona.
+     const outcome = await withTransaction(txQuery => takeVacantPedido(txQuery, {
+       pedidoId, empresaId, choferId,
+     }));
 
      if (outcome === 'invalid-driver') return res.status(403).json({ error: 'No autorizado' });
      if (outcome !== 'taken') return res.status(404).json({ error: 'Pedido no disponible' });

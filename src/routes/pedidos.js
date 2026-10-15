@@ -50,6 +50,7 @@ export function createUpdatePedidoHandler({
   awardPointsFn = awardPointsForDeliveredOrder,
   generateComisionesFn = generateComisionesForDeliveredOrder,
   postEntregaFn = ejecutarPostEntregaUpsell,
+  logErrorFn = error => console.error(error),
 } = {}) {
   return async function updatePedido(req, res) {
     try {
@@ -248,7 +249,7 @@ export function createUpdatePedidoHandler({
       if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
         return res.status(statusCode).json({ error: e.message });
       }
-      console.error(e);
+      logErrorFn(e);
       return res.status(500).json({ error: 'Error actualizando pedido' });
     }
   };

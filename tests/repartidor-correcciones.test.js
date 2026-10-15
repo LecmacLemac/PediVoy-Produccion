@@ -14,8 +14,23 @@ const routerContext = { express, ensureRetornablesLedgerSchema, console,
   listarPagosPorPedidoDefault() { throw new Error('Unexpected payment call'); },
   refrescarEstadoPagoPedidoDefault() { throw new Error('Unexpected payment call'); },
 };
-vm.runInNewContext(read('src/routes/repartidorApi.js').replace(/^import[\s\S]*?;$/gm, '').replace('export function', 'function'), routerContext);
+vm.runInNewContext(read('src/routes/repartidorApi.js')
+  .replace(/^import[\s\S]*?;$/gm, '')
+  .replace(/^export\s+(?=(?:async\s+)?function\s)/gm, ''), routerContext);
 const { createRepartidorApiRouter } = routerContext;
+test('harness VM conserva todos los exports de función y el helper async canónico', async () => {
+  assert.equal(typeof createRepartidorApiRouter, 'function');
+  assert.equal(routerContext.takeVacantPedido.constructor.name, 'AsyncFunction');
+  const calls = [];
+  const pending = routerContext.takeVacantPedido(async (sql, params) => {
+    calls.push({ sql, params: Array.from(params) });
+    return [{ id: 42 }];
+  }, { pedidoId: 42, empresaId: 7, choferId: 4 });
+  assert.equal(typeof pending.then, 'function');
+  assert.equal(await pending, 'taken');
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls.map(call => call.params), [[42, 7], [4, 7], [4, 42, 7]]);
+});
 const ops = read('pedidos/repartidor-operaciones.js');
 const gps = read('pedidos/repartidor-mapa-gps.js');
 const core = read('pedidos/repartidor-core.js');
@@ -132,20 +147,41 @@ test('menú anuncia nombre y estado al abrir/cerrar/navegar', async () => {
   const btn = { setAttribute(k,v) { this[k] = v; } };
   const panel = { classList: { toggle() { return open = !open; }, remove() { open = false; } } };
   const link = { dataset: { sec: 'pedidos' }, setAttribute() {}, removeAttribute() {} };
-  const context = { $: id => id === '#menuToggle' ? btn : id === '#menuPanel' ? panel : {}, $$: sel => sel === '.nav-link' ? [link] : [], document: { getElementById() {}, addEventListener() {} }, window: { addEventListener() {} } };
+  const sections = [{ id: 'sec-mapa', hidden: false }, { id: 'sec-pedidos', hidden: true }];
+  const context = {
+    $: id => id === '#menuToggle' ? btn : id === '#menuPanel' ? panel : {},
+    $$: sel => sel === '.nav-link' ? [link] : sel === 'main > section' ? sections : [],
+    document: { getElementById: id => sections.find(section => section.id === id), addEventListener() {} },
+    window: { addEventListener() {}, scrollTo() {}, scrollY: 0 },
+    requestAnimationFrame: callback => callback(),
+  };
   vm.runInNewContext(read('pedidos/repartidor-shell.js'), context);
   context.initRepartidorShellUI(); btn.onclick(); assert.equal(btn['aria-expanded'], 'true');
   btn.onclick(); assert.equal(btn['aria-expanded'], 'false');
   btn.onclick(); await link.onclick({ preventDefault() {} }); assert.equal(btn['aria-expanded'], 'false');
 });
-test('mapa respeta el filtro operativo compartido entre pendientes y en ruta', () => {
+test('mapa respeta el filtro operativo compartido entre pendientes y en ruta', async () => {
   const nodes = { '#mapRefBtn': {}, '#mapCenterMe': {}, '#mapHint': {} };
-  let markers = 0;
   let status = 'pendiente';
   const context = {
     $: id => nodes[id],
-    map: { invalidateSize() {}, fitBounds() {} },
-    mapMarkers: { clearLayers() { markers = 0; } },
+    map: { fitBounds() {} },
+    mapMarkers: [],
+    mapInfoWindow: { close() {} },
+    googleMapsAuthorizationFailed: false,
+    loadRepartidorGoogleMaps: async () => ({ mapId: 'synthetic-map' }),
+    resizeRepartidorMap() {},
+    showRepartidorMapError(message) { throw new Error(message); },
+    document: { getElementById() {}, createElement: () => ({ style: {} }) },
+    // Synthetic SDK double; this tests filtering, not live provider access.
+    google: { maps: {
+      marker: { AdvancedMarkerElement: class {
+        constructor(options) { Object.assign(this, options); }
+        addListener() {}
+      } },
+      LatLngBounds: class { extend() {} },
+      event: { addListenerOnce() {} },
+    } },
     pedidos: [
       { estado: 'pendiente', latitud: -31, longitud: -64, cliente: 'Ana' },
       { estado: 'en_ruta', latitud: -31.1, longitud: -64.1, cliente: 'Beto' },
@@ -161,13 +197,17 @@ test('mapa respeta el filtro operativo compartido entre pendientes y en ruta', (
     centerMapOnDriver() {},
     loadPedidos: async () => {},
     esc: String,
-    L: { divIcon() {}, marker: () => ({ addTo() { markers++; return this; }, bindPopup() {} }) },
   };
-  vm.runInNewContext(slice(gps, 'function initRepartidorMapaGpsUI()', 'function setGpsFeedback') + slice(gps, 'function renderMap()', '// --- GPS TRACKING'), context);
-  context.initRepartidorMapaGpsUI(); context.renderMap();
-  assert.equal(markers, 1);
-  status = 'en_ruta'; context.renderMap();
-  assert.equal(markers, 1);
+  vm.runInNewContext(slice(gps, 'function initRepartidorMapaGpsUI()', 'function setGpsFeedback') + slice(gps, 'async function renderMap(', '// --- GPS TRACKING'), context);
+  assert.equal(context.renderMap.constructor.name, 'AsyncFunction');
+  context.initRepartidorMapaGpsUI(); await context.renderMap();
+  assert.equal(context.mapMarkers.length, 1);
+  assert.equal(context.mapMarkers[0].title, 'Ana');
+  const previousMarker = context.mapMarkers[0];
+  status = 'en_ruta'; await context.renderMap();
+  assert.equal(context.mapMarkers.length, 1);
+  assert.equal(context.mapMarkers[0].title, 'Beto');
+  assert.equal(previousMarker.map, null);
 });
 test('GPS da feedback inmediato y resultado accesible, sólo al activar', async () => {
   assert.match(html, /id="gpsStatus"[^>]*aria-live="polite"/);
@@ -284,8 +324,12 @@ test('la reactivación automática espera a que los pedidos estén cargados y se
 
 test('todos los enlaces del menú tienen destinos alcanzables por teclado', () => {
   const links = [...html.matchAll(/<a\b[^>]*class="nav-link"[^>]*>/g)].map(m => m[0]);
-  assert.equal(links.length, 8);
-  for (const link of links) {
+  const agentLinks = links.filter(link => /href="\/pedidos\/mi-agente\.html"/.test(link));
+  assert.equal(agentLinks.length, 1);
+  assert.ok(fs.existsSync(new URL('../pedidos/mi-agente.html', import.meta.url)));
+  const panelLinks = links.filter(link => !agentLinks.includes(link));
+  assert.equal(panelLinks.length, 8);
+  for (const link of panelLinks) {
     const section = link.match(/data-sec="([^"]+)"/)?.[1];
     const href = link.match(/href="([^"]+)"/)?.[1];
     assert.equal(href, section ? `#sec-${section}` : 'login.html', link);

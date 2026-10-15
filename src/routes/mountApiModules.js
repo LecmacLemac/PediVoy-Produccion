@@ -1,4 +1,5 @@
 import { registerRoutes } from './index.js';
+import { mountPersonalAgentModules } from './mountPersonalAgents.js';
 import { createAuthGuestSignupRouter } from './authGuestSignup.js';
 import { createSetupRouter } from './setup.js';
 import { createPublicLandingRouter } from './publicLanding.js';
@@ -81,6 +82,9 @@ export function mountApiModules(app, deps) {
 
   app.locals ??= {};
   app.locals.wppEmpresaWorkersShutdown ??= shutdownEmpresaWppWorkers;
+
+  // Separate human management and dedicated agent credentials; disabled until configured.
+  mountPersonalAgentModules(app, deps);
 
   // AUTH / core multi-tenant
   app.use('/api/auth', createAuthGuestSignupRouter({ query, withAuth, pool, withTransaction }));

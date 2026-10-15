@@ -1309,5 +1309,38 @@
     "method": "POST",
     "path": "/internal/cron/cleanup-wpp",
     "classification": "cron_secret"
+  },
+  {
+    "source": "src/routes/miAgente.js",
+    "method": "POST",
+    "path": "/connections",
+    "classification": "usuario_propio",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "personalAgentAuthorityContract",
+      "case": "src/routes/miAgente.js|POST|/connections"
+    }
+  },
+  {
+    "source": "src/routes/miAgente.js",
+    "method": "POST",
+    "path": "/connections/:id/revoke",
+    "classification": "usuario_propio",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "personalAgentAuthorityContract",
+      "case": "src/routes/miAgente.js|POST|/connections/:id/revoke"
+    }
+  },
+  {
+    "source": "src/routes/agentTools.js",
+    "method": "POST",
+    "path": "/tools/:name",
+    "classification": "agente_personal_capability",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "personalAgentAuthorityContract",
+      "case": "src/routes/agentTools.js|POST|/tools/:name"
+    }
   }
 ]

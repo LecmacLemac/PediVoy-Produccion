@@ -28,6 +28,8 @@ const allowed = new Set([
   'publico_capability_explicita',
   'webhook_firmado',
   'cron_secret',
+  'usuario_propio',
+  'agente_personal_capability',
 ]);
 
 const graph = discoverProductionGraph({ root, entries: ['src/app.js'] });

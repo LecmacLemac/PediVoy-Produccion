@@ -5,6 +5,8 @@
 # Allow source/assets
 !*.html
 !*.js
+# Public, reviewed MCP bridge required by Mi agente
+!pedidos/agent-bridge.mjs
 !*.css
 !*.json
 !*.kt

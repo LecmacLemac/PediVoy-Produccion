@@ -3,8 +3,21 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createApp } from '../src/app.js';
-import { createDomainDeps } from '../src/bootstrap/createDomainDeps.js';
+import { isolateRepartidorProductionDI } from './support/repartidor-production-di-isolation.js';
+
+const isolation = isolateRepartidorProductionDI();
+const { createApp } = await import('../src/app.js');
+const { createDomainDeps } = await import('../src/bootstrap/createDomainDeps.js');
+await isolation.fixture();
+test.after(() => {
+  try {
+    assert.deepEqual(isolation.state.defaultDbCalls, []);
+    assert.deepEqual(isolation.state.workerCalls, []);
+    assert.deepEqual(isolation.state.networkViolations, []);
+  } finally {
+    isolation.restore();
+  }
+});
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const checklist = { cliente_confirmado: true, producto_entregado: true, cobro_confirmado: true };
@@ -12,10 +25,20 @@ const checklist = { cliente_confirmado: true, producto_entregado: true, cobro_co
 async function withServer(app, fn) {
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
+  isolation.state.ports.add(server.address().port);
   try {
     await fn(`http://127.0.0.1:${server.address().port}`);
   } finally {
-    await new Promise(resolve => server.close(resolve));
+    const port = server.address().port;
+    try {
+      // ENABLE_WPP=false prevents transport startup, not cron registration.
+      // Exercise the real application lifecycle instead of unref/timeout/exit.
+      assert.equal(await app.locals.wppGeneralShutdown(), true);
+      await app.locals.wppEmpresaWorkersShutdown();
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+      isolation.state.ports.delete(port);
+    }
   }
 }
 
@@ -63,9 +86,10 @@ function productionApp(client, effects, {
   const deps = createDomainDeps({ projectDir });
   assert.equal(typeof deps.ejecutarRecompensaReferido, 'function');
   assert.equal(typeof deps.ejecutarEstrategiaReferidos, 'function');
-  return createApp({
+  const businessQueries = [];
+  const app = createApp({
     ...deps,
-    query: async () => [],
+    query: async (sql, params) => { businessQueries.push({ sql, params }); return []; },
     pool: { connect: async () => client },
     withTransaction: async work => work(async () => []),
     withAuth(req, _res, next) {
@@ -89,7 +113,30 @@ function productionApp(client, effects, {
     ENABLE_WPP: false,
     WPP_QR_ONLY: false,
   });
+  app.locals.diBusinessQueries = businessQueries;
+  return app;
 }
+
+test('DI montaje no ejecuta IO de negocio y teardown libera los timers WPP aunque ENABLE_WPP sea false', async () => {
+  const timersBefore = process.getActiveResourcesInfo().filter(type => type === 'Timeout').length;
+  const { client, calls } = deliveryClient();
+  const effects = [];
+  const app = productionApp(client, effects);
+  await withServer(app, async baseUrl => {
+    assert.deepEqual(calls, [], 'montar no debe iniciar la transacción de entrega');
+    assert.deepEqual(app.locals.diBusinessQueries, [], 'montar no debe ejecutar consultas de negocio inyectadas');
+    assert.deepEqual(effects, []);
+    assert.deepEqual(isolation.state.defaultDbCalls, [], 'ninguna consulta DB por defecto');
+    assert.deepEqual(isolation.state.workerCalls, [], 'ningún worker');
+    assert.equal(typeof app.locals.wppGeneralShutdown, 'function');
+    const response = await fetch(`${baseUrl}/health`);
+    assert.equal(response.status, 200);
+    await response.json();
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(process.getActiveResourcesInfo().filter(type => type === 'Timeout').length, timersBefore,
+    'el fixture debe cerrar los cron/timers, no sólo el socket HTTP');
+});
 
 test('DI productiva createDomainDeps -> createApp -> mount -> repartidor entrega ambas tareas una vez después de COMMIT', async () => {
   const { client, calls } = deliveryClient();
