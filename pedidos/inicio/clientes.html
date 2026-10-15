@@ -6,7 +6,6 @@
   <title>Clientes – MultiEmpresas</title>
   <link rel="stylesheet" href="theme-base.css" />
   
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
   
 <style>
   :root {
@@ -297,9 +296,8 @@
 .val-new { color: #4ade80; font-weight: bold; }
 .val-same { color: var(--muted); opacity: 0.5; }
 
-  /* Leaflet Controls */
-  .leaflet-bar { border: none !important; box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important; }
-  .leaflet-bar a { background-color: #fff !important; color: #0f172a !important; border-bottom: 1px solid #cbd5e1 !important; }
+  /* Google Maps status */
+  #clientesMapError { color:#fca5a5; margin-top:8px; font-size:0.85rem; }
   .pedivoy-brand-logo{display:inline-block;width:auto;height:32px;max-width:150px;object-fit:contain;vertical-align:middle;flex:0 0 auto}.brand .pedivoy-brand-logo{height:32px}.pedivoy-brand-badge{position:fixed;top:12px;left:12px;z-index:1000;display:inline-flex;align-items:center;padding:7px 10px;border-radius:10px;background:rgba(15,23,42,.82);border:1px solid rgba(148,163,184,.22);box-shadow:0 10px 30px rgba(2,8,23,.25);backdrop-filter:blur(10px)}.pedivoy-brand-badge img{height:28px;width:auto;display:block}
 </style>
 </head>
@@ -447,8 +445,9 @@
         <div>
           <label>Ubicación Geográfica (Pin en Mapa)</label>
           <div class="map-container">
-            <div id="map"></div>
+            <div id="map" aria-label="Mapa editable del cliente"></div>
           </div>
+          <div id="clientesMapError" role="alert" hidden></div>
           <div class="form-row">
             <div>
                 <label>Latitud</label>
@@ -587,7 +586,7 @@
 
   <div id="toast" class="toast"></div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="/pedidos/inicio/clientes-google-map.js"></script>
 
   <script>
     // --- Utils ---
@@ -641,6 +640,8 @@
     let zones = [];
     let zoneDriverMap = {}; 
     let map, marker;
+    let clientModalGeneration = 0;
+    let clientMapUnavailable = false;
     let saveBusy = false;
     let deleteBusy = false;
     let geocodeBusy = false;
@@ -774,6 +775,7 @@
 
     // --- CARGA DE CONTEXTO MODAL ---
     async function loadContextForModal() {
+        const context = clientMapContext();
         let empId = null;
         if (STATE.isSuper) {
             empId = $('#c_empresa_id').value;
@@ -783,6 +785,7 @@
         
         // Cargar Zonas
         const resZones = await api(`/api/zonas${qs}`);
+        if (!isClientMapContextCurrent(context)) return;
         if(Array.isArray(resZones)) {
             zones = resZones; 
             renderZoneSelect(resZones);
@@ -794,6 +797,7 @@
             api(`/api/choferes${qs}`)
         ]);
         
+        if (!isClientMapContextCurrent(context)) return;
         zoneDriverMap = {}; 
 
         if (Array.isArray(assignments) && Array.isArray(choferes)) {
@@ -831,52 +835,87 @@
         }
     }
 
-    // --- MAPA LEAFLET ---
-    function initMap(lat, lng) {
-      const defLat = -32.4113; const defLng = -63.2374;
-      const targetLat = lat || defLat;
-      const targetLng = lng || defLng;
-      
-      if (!map) {
-        map = L.map('map').setView([targetLat, targetLng], 13);
-        // Capa clara para mejor lectura de calles y referencias.
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-            subdomains: 'abcd',
-            maxZoom: 20
-        }).addTo(map);
-        
-        map.on('click', function(e) { updateMarker(e.latlng.lat, e.latlng.lng); });
-        setTimeout(() => map.invalidateSize(), 200);
-      } else {
-        map.setView([targetLat, targetLng], lat ? 15 : 13);
-        setTimeout(() => map.invalidateSize(), 200);
-      }
+    // --- GOOGLE MAPS ---
+    function setClientMapToolsDisabled(disabled) {
+      ['btnUseMyLocation', 'btnApplyLatLng', 'btnGeocodeAddress'].forEach(id => { $('#' + id).disabled = disabled; });
+    }
 
-      if (lat && lng) updateMarker(lat, lng, false);
-      else if (marker) { map.removeLayer(marker); marker = null; }
+    function clientMapContext() {
+      return { generation: clientModalGeneration, id: $('#c_id').value, empresa: $('#c_empresa_id').value };
+    }
+
+    function isClientMapContextCurrent(context) {
+      return context.generation === clientModalGeneration && context.id === $('#c_id').value
+        && context.empresa === $('#c_empresa_id').value && $('#modal').classList.contains('open');
+    }
+
+    function beginClientMapSession() {
+      clientModalGeneration++;
+      geocodeBusy = false;
+      $('#btnGeocodeAddress').textContent = 'Ubicar por dirección';
+      setClientMapToolsDisabled(true);
+      if (marker) { marker.map = null; marker = null; }
+      $('#geoStatus').textContent = 'Sin ubicación seleccionada';
+      $('#clientesMapError').hidden = true;
+      $('#clientesMapError').textContent = '';
+      return clientModalGeneration;
+    }
+
+    async function initMap(lat, lng, generation = clientModalGeneration) {
+      const current = () => generation === clientModalGeneration && $('#modal').classList.contains('open');
+      try {
+        if (clientMapUnavailable) throw new Error('Google Maps no está disponible. Recargá la página e intentá nuevamente.');
+        const config = await loadClientesGoogleMaps(authFetch, message => {
+          clientMapUnavailable = true;
+          $('#clientesMapError').hidden = false;
+          $('#clientesMapError').textContent = message;
+          setClientMapToolsDisabled(true);
+        });
+        if (!current()) return false;
+        const position = clientesMapCoordinate(lat, lng);
+        if (!map) {
+          map = new google.maps.Map($('#map'), { center: position || { lat: -32.4113, lng: -63.2374 }, zoom: position ? 15 : 13, mapId: config.mapId || 'DEMO_MAP_ID', mapTypeControl: false, streetViewControl: false, fullscreenControl: false });
+          map.addListener('click', event => {
+            if (event.latLng && $('#modal').classList.contains('open') && !clientMapUnavailable) updateMarker(event.latLng.lat(), event.latLng.lng());
+          });
+          new ResizeObserver(() => {
+            if (!$('#modal').classList.contains('open') || clientMapUnavailable) return;
+            google.maps.event.trigger(map, 'resize');
+            const selected = clientesMapCoordinate($('#c_latitud').value, $('#c_longitud').value);
+            if (selected) map.setCenter(selected);
+          }).observe($('#map'));
+        }
+        google.maps.event.trigger(map, 'resize');
+        map.setCenter(position || { lat: -32.4113, lng: -63.2374 });
+        map.setZoom(position ? 15 : 13);
+        if (position) updateMarker(position.lat, position.lng, false);
+        else if (marker) { marker.map = null; marker = null; }
+        $('#clientesMapError').hidden = true;
+        setClientMapToolsDisabled(false);
+        return true;
+      } catch (error) {
+        if (current()) { $('#clientesMapError').hidden = false; $('#clientesMapError').textContent = error.message; setClientMapToolsDisabled(true); }
+        return false;
+      }
     }
 
     function updateMarker(lat, lng, updateInputs = true) {
+      const position = clientesMapCoordinate(lat, lng);
+      if (!position || clientMapUnavailable) return;
       if (updateInputs) {
-        $('#c_latitud').value = lat.toFixed(6);
-        $('#c_longitud').value = lng.toFixed(6);
+        $('#c_latitud').value = position.lat.toFixed(6);
+        $('#c_longitud').value = position.lng.toFixed(6);
       }
       if (!map) return;
-      if (marker) marker.setLatLng([lat, lng]);
+      if (marker) marker.position = position;
       else {
-        marker = L.marker([lat, lng], { draggable: true }).addTo(map);
-        marker.on('dragend', e => {
-          const pos = e.target.getLatLng();
-          $('#c_latitud').value = pos.lat.toFixed(6);
-          $('#c_longitud').value = pos.lng.toFixed(6);
-          const gs = document.getElementById('geoStatus');
-          if (gs) gs.textContent = `Ubicación: ${pos.lat.toFixed(6)}, ${pos.lng.toFixed(6)}`;
+        marker = new google.maps.marker.AdvancedMarkerElement({ map, position, gmpDraggable: true, title: 'Ubicación del cliente: arrastrá para mover el pin' });
+        marker.addListener('dragend', () => {
+          const pos = marker.position;
+          updateMarker(typeof pos.lat === 'function' ? pos.lat() : pos.lat, typeof pos.lng === 'function' ? pos.lng() : pos.lng);
         });
       }
-
-      const gs = document.getElementById('geoStatus');
-      if (gs) gs.textContent = `Ubicación: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`;
+      $('#geoStatus').textContent = `Ubicación: ${position.lat.toFixed(6)}, ${position.lng.toFixed(6)}`;
     }
 
     async function persistCurrentLocation(lat, lng, zonaId = '') {
@@ -922,17 +961,18 @@
     }
 
     function applyLatLngInputs() {
-      const lat = Number($('#c_latitud').value);
-      const lng = Number($('#c_longitud').value);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      const position = clientesMapCoordinate($('#c_latitud').value, $('#c_longitud').value);
+      if (!position) {
         toast('Ingresa latitud y longitud válidas');
         return;
       }
-      updateMarker(lat, lng, false);
-      if (map) map.setView([lat, lng], 15);
+      updateMarker(position.lat, position.lng, false);
+      if (map) { map.setCenter(position); map.setZoom(15); }
     }
 
     function useMyLocation() {
+      const context = clientMapContext();
+      if (clientMapUnavailable || !map) return;
       if (!navigator.geolocation) {
         toast('Geolocalización no disponible en este dispositivo');
         return;
@@ -943,12 +983,14 @@
 
       navigator.geolocation.getCurrentPosition(
         (pos) => {
+          if (!isClientMapContextCurrent(context) || clientMapUnavailable) return;
           const lat = pos.coords.latitude;
           const lng = pos.coords.longitude;
           updateMarker(lat, lng, true);
-          if (map) map.setView([lat, lng], 16);
+          if (map) { map.setCenter({ lat, lng }); map.setZoom(16); }
         },
         () => {
+          if (!isClientMapContextCurrent(context)) return;
           if (gs) gs.textContent = 'No se pudo obtener ubicación';
           toast('No se pudo obtener tu ubicación');
         },
@@ -957,7 +999,8 @@
     }
 
     async function geocodeAddress() {
-      if (geocodeBusy) return;
+      if (geocodeBusy || !map || clientMapUnavailable) return;
+      const context = clientMapContext();
 
       const direccion = $('#c_direccion').value.trim();
       const ciudad = $('#c_ciudad').value.trim();
@@ -986,23 +1029,23 @@
           body: JSON.stringify(body)
         });
 
+        if (!isClientMapContextCurrent(context) || clientMapUnavailable) return;
         if (res.error) {
           if (gs) gs.textContent = 'No se pudo ubicar la dirección';
           toast(res.error);
           return;
         }
 
-        const lat = Number(res.latitud);
-        const lng = Number(res.longitud);
-        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        const position = clientesMapCoordinate(res.latitud, res.longitud);
+        if (!position) {
           if (gs) gs.textContent = 'No se pudo ubicar la dirección';
           toast('No se pudo ubicar la dirección');
           return;
         }
 
-        if (!map) initMap(lat, lng);
+        const { lat, lng } = position;
         updateMarker(lat, lng, true);
-        if (map) map.setView([lat, lng], 16);
+        if (map) { map.setCenter(position); map.setZoom(16); }
 
         if (res.zona_id && zones.some(z => Number(z.id) === Number(res.zona_id))) {
           $('#c_zona').value = String(res.zona_id);
@@ -1018,10 +1061,9 @@
           toast(res.zona_id ? 'Ubicación encontrada y zona actualizada. Guardá el cliente para conservar el pin.' : 'Ubicación encontrada. Guardá el cliente para conservar el pin.');
         }
       } finally {
-        geocodeBusy = false;
-        if (btn) {
-          btn.disabled = false;
-          btn.textContent = prevTxt;
+        if (isClientMapContextCurrent(context)) {
+          geocodeBusy = false;
+          if (btn) { btn.disabled = clientMapUnavailable; btn.textContent = prevTxt; }
         }
       }
     }
@@ -1033,6 +1075,7 @@
       }
 
       $('#modal').classList.add('open');
+      const generation = beginClientMapSession();
       $('#modalTitle').textContent = 'Nuevo Cliente';
       $('#formClient').reset();
       $('#c_id').value = '';
@@ -1048,15 +1091,15 @@
       }
       
       loadContextForModal();
-      setTimeout(() => initMap(), 100);
+      void initMap(undefined, undefined, generation);
     }
 
-    function closeModal() { $('#modal').classList.remove('open'); }
+    function closeModal() { clientModalGeneration++; $('#modal').classList.remove('open'); }
 
     async function edit(id) {
       const c = clients.find(x => x.id === id);
       if (!c) return;
-      
+      const generation = beginClientMapSession();
       $('#modal').classList.add('open');
       $('#modalTitle').textContent = 'Editar Cliente';
       
@@ -1066,8 +1109,8 @@
       $('#c_direccion').value = c.direccion || '';
       $('#c_ciudad').value = c.ciudad || '';
       $('#c_provincia').value = c.provincia || '';
-      $('#c_latitud').value = c.latitud || '';
-      $('#c_longitud').value = c.longitud || '';
+      $('#c_latitud').value = c.latitud ?? '';
+      $('#c_longitud').value = c.longitud ?? '';
       $('#c_notas').value = c.notas || '';
       $('#c_cuenta_corriente').checked = isCtaCteEnabled(c.cuenta_corriente_habilitada);
       $('#c_requiere_factura').checked = isTruthy(c.requiere_factura);
@@ -1081,12 +1124,13 @@
       }
       
       await loadContextForModal();
+      if (generation !== clientModalGeneration || !$('#modal').classList.contains('open')) return;
 
       $('#c_zona').value = c.zona_id || '';
       updateDriverInfo();
       
       $('#btnDelete').style.display = 'block';
-      setTimeout(() => initMap(c.latitud, c.longitud), 100);
+      await initMap(c.latitud, c.longitud, generation);
     }
 
     async function save() {

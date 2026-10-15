@@ -31,8 +31,15 @@ export function createClientesRouter({
   pointInAnyZone: pointInAnyZoneFn = defaultPointInAnyZone,
   pool: transactionPool = null,
   withTransaction: withTransactionFn = defaultWithTransaction,
+  mapsBrowserEnv = process.env,
 } = {}) {
   const router = express.Router();
+  router.get('/maps-config', withAuthFn, requireCanonicalBackofficeRole, (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const apiKey = String(mapsBrowserEnv.GOOGLE_MAPS_BROWSER_API_KEY || '').trim();
+    if (!apiKey) return res.status(503).json({ error: 'Google Maps no está configurado.' });
+    return res.json({ apiKey, mapId: String(mapsBrowserEnv.GOOGLE_MAPS_MAP_ID || '').trim() || 'DEMO_MAP_ID' });
+  });
   const dbQuery = queryFn;
   const runTransaction = transactionPool?.connect && typeof withTransactionFn === 'function'
     ? (work) => withTransactionFn(work, { pool: transactionPool, maxRetries: 0 })
