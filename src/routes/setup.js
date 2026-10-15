@@ -194,7 +194,7 @@ async function upsertCatalogTemplate({ query, empresaId, vertical, overwrite = f
 }
 
 export function createSetupRouter(deps) {
-  const { query, withTransaction, withAuth, getEmpresaIdFromToken } = deps || {};
+  const { query, withTransaction, withAuth, getEmpresaIdFromToken, mapsBrowserEnv = process.env } = deps || {};
   if (typeof query !== 'function') throw new Error('createSetupRouter: falta query(fn)');
   if (typeof withTransaction !== 'function') throw new Error('createSetupRouter: falta withTransaction(fn)');
   if (typeof withAuth !== 'function') throw new Error('createSetupRouter: falta withAuth(fn)');
@@ -232,6 +232,18 @@ export function createSetupRouter(deps) {
     return next();
   };
   const requireSuperMarketing = requireSuperAdmin;
+
+  // Browser-only credential for the super-admin marketing telemetry map.
+  router.get('/marketing/maps-config', withAuth, requireSuperMarketing, (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const apiKey = String(mapsBrowserEnv.GOOGLE_MAPS_BROWSER_API_KEY || '').trim();
+    if (!apiKey) return res.status(503).json({ error: 'Google Maps no está configurado.' });
+    return res.json({
+      ok: true,
+      apiKey,
+      mapId: String(mapsBrowserEnv.GOOGLE_MAPS_MAP_ID || '').trim() || 'DEMO_MAP_ID',
+    });
+  });
 
   const validateIncidenciaForeignKeys = async ({ empresaId, payload }) => {
     const b = payload || {};
