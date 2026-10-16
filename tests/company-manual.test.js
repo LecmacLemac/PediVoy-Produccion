@@ -119,6 +119,25 @@ test('Spanish manual covers scope, verified modules and safe support with valid 
   assert.doesNotMatch(html, /<script|mailto:|https?:\/\//);
 });
 
+test('manual explains every configurable product group and the effects of its options', () => {
+  const requiredGuidance = [
+    'Nombre del producto', 'Precio ($)', 'Descripción', 'SKU / Código interno', 'Categoría', 'Orden (prioridad)',
+    'Stock mínimo', 'Estado: Activo / Inactivo', 'Producto retornable / con envase a devolver',
+    'Es un activo físico', 'Cobrar alquiler mientras esté en el cliente', 'Monto alquiler mensual ($)', 'Plazo mínimo (meses)',
+    'Etiqueta (Promo)', 'Imagen principal, Imagen 2 e Imagen 3 (URL)', 'App Catálogo', 'Web Landing',
+    'Regalo por única vez por cliente', 'Producto de regalo', 'Alcance de la promo única', 'Mínimo total del pedido ($)',
+    'Cantidad mínima del producto disparador', 'Producto adicional requerido (combo)', 'Descuento (%) y Descuento fijo ($)',
+    'Tope total de usos / Tope de usos por día', 'Prioridad de promo', 'Combinación con otras promos', 'Vigencia desde / hasta',
+    'Programar este producto', 'Repetición: Cada semana / Fechas puntuales', 'Abrir y cerrar: días antes y hora',
+    'Permitir pedidos anticipados', 'Cupo diario compartido', 'Reglas por canal', 'Excepciones por fecha',
+    'Vista previa de lo guardado'
+  ];
+  for (const text of requiredGuidance) assert.ok(html.includes(text), text);
+  assert.match(html, /la etiqueta promocional no activa una promoción/i);
+  assert.match(html, /Cupo diario compartido[\s\S]*Vacío significa ilimitado; 0 significa agotado/);
+  assert.match(html, /Pausar nuevas compras no cancela pedidos existentes/);
+});
+
 test('manual works without JavaScript on mobile and desktop, with keyboard-accessible controls', async t => {
   const { default: puppeteer } = await import('puppeteer');
   const { origin } = await harness(t);

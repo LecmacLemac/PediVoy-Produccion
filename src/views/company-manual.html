@@ -74,16 +74,71 @@
           <p class="notice"><strong>Pedidos finalizados:</strong> los ítems de pedidos entregados o cancelados quedan protegidos. Se permiten correcciones administrativas de método de pago, chofer y zona. Admin y super pueden reabrir un cancelado como Pendiente; revisá el caso antes de hacerlo para no retomar una entrega por error.</p>
         </section>
         <section id="catalogo" aria-labelledby="catalogo-titulo">
-          <h2 id="catalogo-titulo">4. Catálogo y menú programado</h2>
-          <ol>
-            <li>Entrá a <a href="/pedidos/inicio/producto.html">Inicio → Productos</a>. Elegí <strong>Nuevo Producto</strong> o editá uno existente.</li>
-            <li>Revisá nombre, precio, descripción, categoría y estado. En <strong>Mostrar en</strong>, elegí los canales que correspondan: <strong>App Catálogo</strong> y <strong>Web Landing</strong>.</li>
-            <li>Pulsá <strong>Guardar Producto</strong>. Volvé a abrirlo para comprobar los valores guardados.</li>
-          </ol>
-          <h3>Si está habilitado el menú programado</h3>
-          <p>En Empresa, el bloque <strong>Menú y pedidos anticipados</strong> permite configurar zona horaria, días de servicio, fechas cerradas y anticipación. Se guarda por separado con <strong>Guardar configuración del menú</strong>.</p>
-          <p>En el producto podés programar días o fechas, horarios, cupos y excepciones. Guardá con <strong>Guardar Producto</strong>, volvé a abrirlo y usá la vista previa para la fecha y el canal que quieras consultar. La vista previa usa lo guardado, no los cambios pendientes.</p>
-          <p class="notice">Si aparece “Pendiente de activación del sistema”, continuá con las reglas manuales. Un día cerrado de empresa prevalece sobre el producto. El cupo del menú no modifica el stock físico y pausar nuevas compras no cancela pedidos existentes.</p>
+          <h2 id="catalogo-titulo">4. Catálogo y configuración de productos</h2>
+          <p>Entrá a <a href="/pedidos/inicio/producto.html">Inicio → Productos</a> y elegí <strong>Nuevo Producto</strong> o editá uno existente. Guardá siempre con <strong>Guardar Producto</strong> y volvé a abrirlo para comprobar los valores registrados.</p>
+
+          <h3>Datos básicos y organización</h3>
+          <dl>
+            <dt><strong>Nombre del producto *</strong></dt><dd>Nombre visible para quienes operan y para los canales donde publiques el producto. Usá un nombre claro y no dupliques el mismo producto con variantes mínimas.</dd>
+            <dt><strong>Precio ($) *</strong></dt><dd>Precio de venta del producto. Es obligatorio y no puede ser negativo.</dd>
+            <dt><strong>Descripción</strong></dt><dd>Detalle breve que ayuda a identificar lo que se vende: presentación, contenido, condición comercial o aclaración relevante.</dd>
+            <dt><strong>SKU / Código interno</strong></dt><dd>Identificador opcional de control interno. Si lo cargás, debe ser único dentro de tu empresa; usalo para evitar confusiones entre productos parecidos.</dd>
+            <dt><strong>Categoría</strong></dt><dd>Grupo para ordenar el catálogo, por ejemplo “Bidones”, “Accesorios” o “Alimentos”.</dd>
+            <dt><strong>Orden (prioridad)</strong></dt><dd>Posición dentro de la categoría: los números más bajos aparecen antes. Si lo dejás vacío, el sistema ordena después por nombre.</dd>
+          </dl>
+
+          <h3>Inventario, estado y retornables</h3>
+          <dl>
+            <dt><strong>Stock mínimo</strong></dt><dd>Umbral operativo de referencia para controlar existencias. No descuenta ni limita por sí mismo las ventas del catálogo.</dd>
+            <dt><strong>Estado: Activo / Inactivo</strong></dt><dd>Activo mantiene el producto habilitado; Inactivo lo retira de la operación comercial sin necesidad de eliminar su registro.</dd>
+            <dt><strong>Producto retornable / con envase a devolver</strong></dt><dd>Marcá esta opción cuando el repartidor deba confirmar los envases vacíos que recibe del cliente al entregar el producto.</dd>
+          </dl>
+
+          <h3>Activos y alquiler</h3>
+          <dl>
+            <dt><strong>Es un activo físico</strong></dt><dd>Usalo para elementos como dispensers, máquinas o tubos que deban registrarse en el módulo de Activos y Comodatos.</dd>
+            <dt><strong>Cobrar alquiler mientras esté en el cliente</strong></dt><dd>Activa el cálculo de un cargo mensual por cada activo entregado al cliente.</dd>
+            <dt><strong>Monto alquiler mensual ($)</strong></dt><dd>Valor mensual propio de este activo. Si queda vacío, se usa el valor predeterminado configurado para la empresa, cuando exista.</dd>
+            <dt><strong>Plazo mínimo (meses)</strong></dt><dd>Período mínimo de alquiler que querés registrar para este activo. Usá 0 o dejalo vacío cuando no corresponda fijar un plazo.</dd>
+          </dl>
+
+          <h3>Marketing, imágenes y visibilidad</h3>
+          <dl>
+            <dt><strong>Etiqueta (Promo)</strong></dt><dd>Texto corto que se muestra como distintivo, por ejemplo “Oferta” o “Popular”. No crea un descuento por sí solo.</dd>
+            <dt><strong>Imagen principal, Imagen 2 e Imagen 3 (URL)</strong></dt><dd>Direcciones de las imágenes del producto. La principal es la referencia visual; las otras dos son opcionales. Verificá que cada URL corresponda a la imagen correcta antes de publicar.</dd>
+            <dt><strong>App Catálogo</strong></dt><dd>Hace visible el producto en el catálogo de la aplicación.</dd>
+            <dt><strong>Web Landing</strong></dt><dd>Hace visible el producto en la landing web. Podés publicar en uno, ambos o ninguno de los canales; sin canales seleccionados, queda oculto comercialmente.</dd>
+          </dl>
+
+          <h3>Promoción por primera compra</h3>
+          <p>Activá <strong>Regalo por única vez por cliente</strong> únicamente cuando quieras configurar una promoción asociada a la compra de este producto. Debés definir al menos un regalo o un descuento.</p>
+          <dl>
+            <dt><strong>Producto de regalo</strong></dt><dd>Producto que se agrega como beneficio cuando se cumplen las reglas de la promoción.</dd>
+            <dt><strong>Alcance de la promo única</strong></dt><dd><em>Una vez por este producto</em> permite una promoción diferente por cada producto disparador. <em>Una sola vez total por cliente</em> limita este beneficio a una única vez para el cliente.</dd>
+            <dt><strong>Mínimo total del pedido ($)</strong></dt><dd>Importe mínimo que debe alcanzar el pedido para aplicar la promoción. Vacío significa que no agregás ese requisito.</dd>
+            <dt><strong>Cantidad mínima del producto disparador</strong></dt><dd>Cantidad de este producto necesaria para disparar la promoción; por ejemplo, 2 para una mecánica tipo 2x1.</dd>
+            <dt><strong>Producto adicional requerido (combo)</strong></dt><dd>Otro producto que debe estar incluido en el mismo pedido. Si no hace falta un combo, dejalo en “Sin requisito adicional”.</dd>
+            <dt><strong>Descuento (%) y Descuento fijo ($)</strong></dt><dd>Beneficios monetarios alternativos o complementarios al regalo. El porcentaje debe estar entre 0 y 100; no cargues valores negativos.</dd>
+            <dt><strong>Tope total de usos / Tope de usos por día</strong></dt><dd>Límites para controlar cuántas veces puede usarse la promoción en total y por jornada. Vacíos significa que no fijás ese tope.</dd>
+            <dt><strong>Prioridad de promo</strong></dt><dd>Orden de preferencia cuando varias promociones compiten. Usá una escala interna coherente entre tus productos.</dd>
+            <dt><strong>Combinación con otras promos</strong></dt><dd><em>Combinable</em> permite que conviva con otras promociones aplicables. <em>Exclusiva</em> impide la combinación; si compite con otra exclusiva, se resuelve por prioridad.</dd>
+            <dt><strong>Vigencia desde / hasta</strong></dt><dd>Período en el que la promoción puede aplicarse. La fecha “desde” no puede ser posterior a “hasta”. Si no definís fechas, no agregás un límite temporal desde este formulario.</dd>
+          </dl>
+          <p class="notice"><strong>Control previo:</strong> la etiqueta promocional no activa una promoción. Antes de guardar una promo real, comprobá el producto disparador, el beneficio, la vigencia, los topes y la combinación con otras promos.</p>
+
+          <h3>Menú programado, si está habilitado en tu empresa</h3>
+          <p>En Empresa, el bloque <strong>Menú y pedidos anticipados</strong> define zona horaria, días de servicio, fechas cerradas y anticipación. Esa configuración se guarda por separado con <strong>Guardar configuración del menú</strong>.</p>
+          <dl>
+            <dt><strong>Programar este producto</strong></dt><dd>Activa reglas de disponibilidad por calendario para este producto. Conserva el estado Activo y la visibilidad manual.</dd>
+            <dt><strong>Repetición: Cada semana / Fechas puntuales</strong></dt><dd>Define si el producto se ofrece en determinados días semanales o solo en fechas específicas de entrega.</dd>
+            <dt><strong>Abrir y cerrar: días antes y hora</strong></dt><dd>Ventana en la que se permiten nuevas compras para la fecha de entrega. La apertura debe ser anterior al cierre.</dd>
+            <dt><strong>Permitir pedidos anticipados</strong></dt><dd>Permite pedidos para fechas futuras, siempre que la empresa también tenga habilitada esa posibilidad.</dd>
+            <dt><strong>Cupo diario compartido</strong></dt><dd>Límite de unidades o cantidades para ese día. Vacío significa ilimitado; 0 significa agotado. Este cupo no modifica el stock físico.</dd>
+            <dt><strong>Reglas por canal</strong></dt><dd>Personaliza horarios por App Catálogo o Web Landing. Si no personalizás un canal, hereda las reglas generales; cupos y excepciones siguen siendo compartidos.</dd>
+            <dt><strong>Excepciones por fecha</strong></dt><dd>Permiten pausar compras, heredar el cupo diario, declarar cupo ilimitado o cargar un cupo específico para una fecha. Pausar nuevas compras no cancela pedidos existentes.</dd>
+            <dt><strong>Vista previa de lo guardado</strong></dt><dd>Consulta cómo se comporta el producto para una fecha y canal determinados. Usa únicamente la configuración ya guardada; los cambios pendientes no se muestran.</dd>
+          </dl>
+          <p class="notice">Si aparece “Pendiente de activación del sistema”, se mantienen las reglas manuales. Un día cerrado de empresa prevalece sobre el producto. Después de cualquier cambio de programación, guardá el producto y verificá la vista previa.</p>
         </section>
         <section id="clientes" aria-labelledby="clientes-titulo">
           <h2 id="clientes-titulo">5. Clientes y zonas de reparto</h2>
