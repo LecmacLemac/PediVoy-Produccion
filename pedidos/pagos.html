@@ -90,6 +90,20 @@
     }
     select:focus, input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.2); }
 
+    .filters-card .field { min-width:0; flex:1 1 170px; }
+    .filters-card .field-search { flex:2 1 300px; }
+    .filters-card input, .filters-card select { width:100%; min-width:0; }
+    .filters-card :focus-visible { outline:2px solid var(--primary); outline-offset:3px; }
+    .filters-card [aria-invalid="true"] { border-color:var(--danger); }
+    #filtrosAyuda, #resultadosEstado { color:var(--text-muted); line-height:1.6; overflow-wrap:anywhere; }
+    .btn:disabled { opacity:.55; cursor:wait; }
+    .kpi-scope { font-size:.75rem; color:var(--text-muted); }
+    @media(max-width:480px) {
+      .filters-card { padding:1rem; gap:.75rem; }
+      .filters-card .field { flex-basis:100%; }
+      .filters-card .btn { flex:1 1 120px; justify-content:center; }
+    }
+
     /* BUTTONS */
     .btn {
       padding: 0.7rem 1.2rem; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.9rem;
@@ -214,10 +228,10 @@
       position: fixed; bottom: 30px; right: 30px; background: #fff; color: #0f172a; 
       padding: 12px 24px; border-radius: 12px; font-weight: 600; 
       box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-      transform: translateY(150%); transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); z-index: 200; 
+      transform: translateY(150%); visibility:hidden; opacity:0; pointer-events:none; transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity .3s; z-index: 200;
       display: flex; align-items: center; gap: 10px;
     }
-    .toast.show { transform: translateY(0); }
+    .toast.show { transform: translateY(0); visibility:visible; opacity:1; }
 
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
@@ -229,7 +243,9 @@
       .menu { overflow-x: auto; padding-bottom: 5px; gap: 20px; }
       .menu::-webkit-scrollbar { display: none; }
       main.container { padding: 14px 12px 24px; }
-      .filters-card { flex-direction: column; align-items: stretch; }
+      .filters-card { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:stretch; }
+      .filters-card .field-search, .filters-card #wrapEmpresa, .filters-card > .btn-primary { grid-column:1 / -1; }
+      .filters-card .btn { min-height:44px; justify-content:center; }
       .field { width: 100%; }
       select, input { min-width: 100%; width: 100%; }
       .kpi-grid { grid-template-columns: 1fr; }
@@ -269,54 +285,70 @@
     <div class="kpi-card">
       <span class="kpi-title">Monto Total</span>
       <span class="kpi-value" id="kpiTotal">$ 0</span>
+      <span class="kpi-scope">de registros cargados</span>
       <i class="fa-solid fa-sack-dollar kpi-icon"></i>
     </div>
     <div class="kpi-card">
       <span class="kpi-title">Verificados</span>
       <span class="kpi-value" id="kpiVerificados" style="color: var(--success)">0</span>
+      <span class="kpi-scope">de registros cargados</span>
       <i class="fa-solid fa-check-circle kpi-icon"></i>
     </div>
     <div class="kpi-card">
       <span class="kpi-title">Pendientes</span>
       <span class="kpi-value" id="kpiPendientes" style="color: var(--warning)">0</span>
+      <span class="kpi-scope">de registros cargados</span>
       <i class="fa-solid fa-clock kpi-icon"></i>
     </div>
   </div>
 
   <div class="filters-card">
     <div class="field" id="wrapEmpresa" style="display:none;">
-      <label><i class="fa-solid fa-building"></i> Empresa (Super)</label>
+      <label for="fEmpresa">Empresa (Super)</label>
       <select id="fEmpresa" onchange="onEmpresaFilterChange()">
         <option value="">Todas</option>
       </select>
     </div>
 
-    <div class="field">
-      <label><i class="fa-solid fa-calendar"></i> Fecha</label>
-      <input type="date" id="fFecha">
+    <div class="field field-search">
+      <label for="fBuscar">Buscar pagos</label>
+      <input type="search" id="fBuscar" maxlength="120" placeholder="Cliente, teléfono, #pedido u operación" aria-describedby="filtrosAyuda" autocomplete="off">
     </div>
-
     <div class="field">
-      <label><i class="fa-solid fa-filter"></i> Estado / Tipo</label>
+      <label for="fDesde">Desde</label>
+      <input type="date" id="fDesde">
+    </div>
+    <div class="field">
+      <label for="fHasta">Hasta</label>
+      <input type="date" id="fHasta">
+    </div>
+    <div class="field">
+      <label for="fTipo">Tipo</label>
+      <select id="fTipo">
+        <option value="">Todos los tipos</option>
+        <option value="transferencia">Transferencias</option>
+        <option value="qr">QR Mercado Pago</option>
+        <option value="sin_comprobante">Sin comprobante</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="fEstado">Estado</label>
       <select id="fEstado">
-        <option value="">Todo</option>
-        <option value="pendiente">⏳ Pendientes</option>
-        <option value="en_revision">🛡️ En revisión</option>
-        <option value="verificado">✅ Verificados</option>
-        <option value="qr">📱 QR Mercado Pago</option>
-        <option value="transferencia">🏦 Transferencias</option>
-        <option value="sin_comprobante">📎 Sin comprobante</option>
-        <option value="orphan">⚠️ Huérfanos (Sin Pedido)</option>
+        <option value="">Todos los estados</option>
+        <option value="pendiente">Pendiente</option>
+        <option value="en_revision">En revisión</option>
+        <option value="verificado">Verificado</option>
+        <option value="orphan">Sin pedido</option>
       </select>
     </div>
 
     <div class="field">
-      <label><i class="fa-solid fa-truck"></i> Chofer</label>
+      <label for="fChofer">Chofer</label>
       <select id="fChofer"><option value="">Todos</option></select>
     </div>
 
     <div class="field">
-      <label><i class="fa-solid fa-building-columns"></i> Cuenta bancaria</label>
+      <label for="fCuenta">Cuenta bancaria</label>
       <select id="fCuenta" onchange="loadPagos()">
         <option value="">Todas</option>
       </select>
@@ -328,17 +360,21 @@
     <button class="btn btn-ghost" onclick="aplicarHoy()">
       <i class="fa-regular fa-calendar"></i> Hoy
     </button>
+    <button class="btn btn-ghost" id="presetSemana" onclick="aplicarPeriodo('semana')">Últimos 7 días</button>
+    <button class="btn btn-ghost" id="presetMes" onclick="aplicarPeriodo('mes')">Este mes</button>
     <button class="btn btn-ghost" onclick="limpiarFiltros()">
       <i class="fa-solid fa-broom"></i> Limpiar
     </button>
     <button class="btn btn-ghost" onclick="exportarCSV()">
-      <i class="fa-solid fa-file-csv"></i> Exportar CSV
+      <i class="fa-solid fa-file-csv"></i> CSV de cargados
     </button>
     <button class="btn btn-ghost" id="btnVerMas" onclick="cargarMas()" style="display:none;">
       <i class="fa-solid fa-angles-down"></i> Ver más
     </button>
   </div>
 
+  <p id="filtrosAyuda">Buscá en todos los registros. Aplicá con Enter o Filtrar. Fechas inclusivas, horario de Argentina.</p>
+  <p id="resultadosEstado" role="status" aria-live="polite"></p>
   <div class="table-container">
     <div class="table-responsive">
       <table>
@@ -441,12 +477,18 @@
   let deleteBusy = false;
   let currentRows = [];
   const PAGE_LIMIT = 200;
-  let currentOffset = 0;
   let hasMoreRows = false;
-  let currentBeforeId = null;
-  let currentBeforeQrId = null;
-  let currentBeforeMissingId = null;
   let cuentasBancarias = [];
+  let listGeneration = 0, listController = null, listBusy = false;
+  let sourcePages = {}, appliedFilters = null;
+  let accountsGeneration = 0;
+
+  function invalidateList() {
+    listGeneration++;
+    listController?.abort(); listBusy = false; hasMoreRows = false;
+    $('#btnVerMas').style.display = 'none';
+    $('#rows').setAttribute('aria-busy', 'false');
+  }
 
   // --- Inicialización ---
   $('#logout').onclick = async (ev) => {
@@ -480,7 +522,7 @@
     }
     
     // 3. Sin fecha por defecto: mostrar últimos comprobantes disponibles
-    $('#fFecha').value = '';
+    $('#fDesde').value = '';
     await loadCuentasBancarias();
     
     loadPagos(true);
@@ -493,115 +535,134 @@
     return `${banco} · ${alias}${emp}`;
   }
 
-  async function loadCuentasBancarias(empresaId = null) {
-    const empresa = String(currentUser?.role || '').toLowerCase() === 'super' && empresaId
-      ? String(empresaId)
-      : ($('#fEmpresa')?.value || '');
+  async function loadCuentasBancarias() {
+    const generation = ++accountsGeneration;
+    const empresa = $('#fEmpresa').value;
+    $('#fCuenta').disabled = true;
     let url = '/api/transferencias/cuentas-bancarias';
     if (empresa) url += `?empresa_id=${encodeURIComponent(empresa)}`;
-
     const rows = await api(url);
-    cuentasBancarias = Array.isArray(rows) ? rows : [];
-    const current = $('#fCuenta')?.value || '';
-    const opts = [
-      '<option value="">Todas</option>',
-      '<option value="no_detectada">Sin detectar</option>',
-      ...cuentasBancarias.map(c => `<option value="${Number(c.id)}">${esc(cuentaLabel(c))}</option>`)
-    ];
-    $('#fCuenta').innerHTML = opts.join('');
-    if (current && opts.some(o => o.includes(`value="${esc(current)}"`))) $('#fCuenta').value = current;
+    if (generation !== accountsGeneration || empresa !== $('#fEmpresa').value) return false;
+    cuentasBancarias = Array.isArray(rows) ? rows.filter(c => !empresa || Number(c.empresa_id) === Number(empresa)) : [];
+    const current = $('#fCuenta').value;
+    $('#fCuenta').innerHTML = '<option value="">Todas</option><option value="no_detectada">Sin detectar</option>' +
+      cuentasBancarias.map(c => `<option value="${Number(c.id)}">${esc(cuentaLabel(c))}</option>`).join('');
+    if (Array.from($('#fCuenta').options).some(o => o.value === current)) $('#fCuenta').value = current;
+    $('#fCuenta').disabled = false;
+    return true;
   }
 
   async function onEmpresaFilterChange() {
-    await loadCuentasBancarias();
-    loadPagos(true);
+    invalidateList();
+    currentRows = [];
+    updateKPIs(currentRows);
+    $('#rows').innerHTML = '<tr><td colspan="9">Cargando filtros de la empresa seleccionada…</td></tr>';
+    $('#resultadosEstado').textContent = '0 registros cargados · Actualizando empresa y cuentas…';
+    const generation = listGeneration;
+    $('#fCuenta').value = '';
+    $('#fCuenta').innerHTML = '<option value="">Cargando cuentas…</option>';
+    if (await loadCuentasBancarias() && generation === listGeneration) return loadPagos(true);
   }
 
-  // --- Cargar Pagos corregido ---
+  // Filters are applied explicitly (Enter / Filtrar), never over the loaded page.
+  document.querySelector('.filters-card').addEventListener('keydown', event => {
+    if (event.key === 'Enter' && event.target.matches('input, select')) {
+      event.preventDefault(); loadPagos(true);
+    }
+  });
+
+  // Editing a draft cancels old results, but does not flood the API with requests.
+  document.querySelector('.filters-card').addEventListener('input', event => {
+    if (!event.target.matches('input, select')) return;
+    invalidateList();
+    $('#resultadosEstado').textContent = `${currentRows.length} registros cargados · Filtros modificados; presioná Filtrar para aplicarlos.`;
+  });
+
+  function validateFilters() {
+    let message = '';
+    for (const id of ['fDesde','fHasta']) {
+      const input = $('#' + id), value = input.value;
+      const valid = !input.validity.badInput && (!value || (/^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0,10) === value));
+      input.setAttribute('aria-invalid', String(!valid));
+      if (!valid) message = 'Ingresá una fecha válida.';
+    }
+    if ($('#fDesde').value && $('#fHasta').value && $('#fDesde').value > $('#fHasta').value) {
+      $('#fHasta').setAttribute('aria-invalid', 'true');
+      message = 'El rango es inválido: Desde debe ser anterior o igual a Hasta.';
+    }
+    if ($('#fBuscar').value.trim().length > 120) message = 'La búsqueda admite hasta 120 caracteres.';
+    if (message) $('#resultadosEstado').textContent = message;
+    return !message;
+  }
+
   async function loadPagos(reset = true) {
-    const fecha = $('#fFecha').value;
-    const estadoFiltro = $('#fEstado').value;
-    const chofer = $('#fChofer').value;
-    const empresa = $('#fEmpresa').value;
-    const cuenta = $('#fCuenta')?.value || '';
-    const hasCuentaFilter = !!cuenta;
-
+    if (!reset && (listBusy || !hasMoreRows)) return;
+    if (reset) invalidateList();
+    if (!validateFilters()) return;
+    const generation = listGeneration;
+    const fields = { q: 'fBuscar', desde: 'fDesde', hasta: 'fHasta', chofer_id: 'fChofer', empresa_id: 'fEmpresa' };
+    const filters = Object.fromEntries(Object.entries(fields).map(([key,id]) => [key, $('#' + id).value.trim()]));
+    if (reset) appliedFilters = { ...filters, estado: $('#fEstado').value, tipo: $('#fTipo').value, cuenta: $('#fCuenta').value };
+    const { estado, tipo, cuenta, ...values } = appliedFilters;
+    const params = new URLSearchParams({ limit: PAGE_LIMIT });
+    for (const [key,value] of Object.entries(values)) if (value) params.set(key,value);
+    const sources = [
+      { type: 'transferencia', label: 'Transferencias', path: '/api/transferencias', normalize: normalizeTransferRows, enabled: !tipo || tipo === 'transferencia' },
+      { type: 'qr', label: 'QR', path: '/api/admin/qr/pagos', normalize: normalizeQrRows, enabled: (!tipo || tipo === 'qr') && !cuenta && !['en_revision', 'orphan'].includes(estado) },
+      { type: 'sin_comprobante', label: 'Sin comprobante', path: '/api/transferencias/sin-comprobante', normalize: normalizeMissingProofRows, enabled: (!tipo || tipo === 'sin_comprobante') && !cuenta && ['', 'pendiente'].includes(estado) }
+    ];
     if (reset) {
-      currentOffset = 0;
-      currentBeforeId = null;
-      currentBeforeQrId = null;
-      currentBeforeMissingId = null;
-      hasMoreRows = false;
-      currentRows = [];
-      $('#rows').innerHTML = '<tr><td colspan="9" style="padding:3rem; text-align:center; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Cargando datos...</td></tr>';
+      currentRows = []; sourcePages = {};
+      for (const source of sources) sourcePages[source.type] = { exhausted: !source.enabled, cursor: null };
+      updateKPIs(currentRows);
+      $('#rows').innerHTML = '<tr><td colspan="9">Cargando registros…</td></tr>';
     }
-
-    const wantsTransfers = !['qr', 'sin_comprobante'].includes(estadoFiltro);
-    const wantsQr = !hasCuentaFilter && !['en_revision', 'orphan', 'transferencia', 'sin_comprobante'].includes(estadoFiltro);
-    const wantsMissingProof = !hasCuentaFilter && ['', 'pendiente', 'transferencia', 'sin_comprobante'].includes(estadoFiltro);
-    const requests = [];
-
-    if (wantsTransfers) {
-      let url = `/api/transferencias?limit=${PAGE_LIMIT}`;
-      if(fecha) url += `&fecha=${fecha}`;
-      if (!reset && currentBeforeId) url += `&before_id=${currentBeforeId}`;
-      if(chofer) url += `&chofer_id=${chofer}`;
-      if(empresa) url += `&empresa_id=${empresa}`;
-      if(cuenta) url += `&cuenta_bancaria_id=${encodeURIComponent(cuenta)}`;
-      if(estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') url += `&estado=${estadoFiltro}`;
-      if(estadoFiltro === 'en_revision') url += `&estado_revision=en_revision`;
-      requests.push(api(url).then(rows => normalizeTransferRows(Array.isArray(rows) ? rows : [])));
-    } else {
-      requests.push(Promise.resolve([]));
+    listBusy = true; listController = new AbortController();
+    const signal = listController.signal;
+    $('#btnVerMas').disabled = true;
+    $('#rows').setAttribute('aria-busy', 'true');
+    $('#resultadosEstado').textContent = `${currentRows.length} registros cargados · Cargando…`;
+    const batches = await Promise.all(sources.filter(s => s.enabled && !sourcePages[s.type].exhausted).map(async source => {
+      const query = new URLSearchParams(params), page = sourcePages[source.type];
+      if (page.cursor) {
+        query.set('before_id', page.cursor.id);
+        query.set('before_fecha', page.cursor.fecha);
+      }
+      if (source.type === 'transferencia') {
+        if (cuenta) query.set('cuenta_bancaria_id', cuenta);
+        if (estado === 'en_revision') query.set('estado_revision', estado);
+      }
+      if (['pendiente', 'verificado', 'orphan'].includes(estado)) query.set('estado', estado);
+      try {
+        const response = await authFetch(source.path + '?' + query, { signal });
+        if (response.status === 401) { location.href = 'login.html'; throw new Error('Sesión vencida (401)'); }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const raw = await response.json();
+        if (!Array.isArray(raw)) throw new Error('Respuesta inválida');
+        return { source, raw, rows: source.normalize(raw) };
+      } catch(error) { return { source, error }; }
+    }));
+    if (generation !== listGeneration || signal.aborted) return;
+    const errors = [];
+    for (const batch of batches) {
+      if (batch.error) { errors.push(`${batch.source.label}: ${batch.error.message}`); continue; }
+      const page = sourcePages[batch.source.type], last = batch.raw.at(-1);
+      page.exhausted = batch.raw.length < PAGE_LIMIT;
+      if (last) page.cursor = { id: String(last.id), fecha: last.cursor_fecha || (batch.source.type === 'qr' ? last.settlement_at || last.updated_at || last.created_at : last.fecha) || '-infinity' };
+      currentRows.push(...batch.rows);
     }
-
-    if (wantsQr) {
-      let qrUrl = `/api/admin/qr/pagos?limit=${PAGE_LIMIT}`;
-      if(fecha) qrUrl += `&fecha=${fecha}`;
-      if (!reset && currentBeforeQrId) qrUrl += `&before_id=${currentBeforeQrId}`;
-      if(chofer) qrUrl += `&chofer_id=${chofer}`;
-      if(empresa) qrUrl += `&empresa_id=${empresa}`;
-      if(estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') qrUrl += `&estado=${estadoFiltro}`;
-      requests.push(api(qrUrl).then(rows => normalizeQrRows(Array.isArray(rows) ? rows : [])));
-    } else {
-      requests.push(Promise.resolve([]));
-    }
-
-    if (wantsMissingProof) {
-      let missingUrl = `/api/transferencias/sin-comprobante?limit=${PAGE_LIMIT}`;
-      if(fecha) missingUrl += `&fecha=${fecha}`;
-      if (!reset && currentBeforeMissingId) missingUrl += `&before_id=${currentBeforeMissingId}`;
-      if(chofer) missingUrl += `&chofer_id=${chofer}`;
-      if(empresa) missingUrl += `&empresa_id=${empresa}`;
-      requests.push(api(missingUrl).then(rows => normalizeMissingProofRows(Array.isArray(rows) ? rows : [])));
-    } else {
-      requests.push(Promise.resolve([]));
-    }
-
-    const [transferRows, qrRows, missingProofRows] = await Promise.all(requests);
-    let data = transferRows.concat(qrRows, missingProofRows);
-
-    data.sort((a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime());
-
-    currentRows = reset ? data : currentRows.concat(data);
-    hasMoreRows = transferRows.length === PAGE_LIMIT || qrRows.length === PAGE_LIMIT || missingProofRows.length === PAGE_LIMIT;
-    currentOffset += data.length;
-    if (transferRows.length > 0) {
-      const lastTransfer = transferRows[transferRows.length - 1];
-      currentBeforeId = Number(lastTransfer?.raw_id || 0) || currentBeforeId;
-    }
-    if (qrRows.length > 0) {
-      const lastQr = qrRows[qrRows.length - 1];
-      currentBeforeQrId = Number(lastQr?.raw_id || 0) || currentBeforeQrId;
-    }
-    if (missingProofRows.length > 0) {
-      const lastMissing = missingProofRows[missingProofRows.length - 1];
-      currentBeforeMissingId = Number(lastMissing?.raw_id || 0) || currentBeforeMissingId;
-    }
+    currentRows = [...new Map(currentRows.map(row => [row.row_id, row])).values()];
+    currentRows.sort((a,b) => new Date(b.fecha || 0) - new Date(a.fecha || 0));
+    hasMoreRows = Object.values(sourcePages).some(page => !page.exhausted);
+    listBusy = false;
+    $('#rows').setAttribute('aria-busy', 'false');
+    $('#btnVerMas').disabled = false;
+    $('#btnVerMas').textContent = errors.length ? 'Reintentar carga' : 'Ver más';
     $('#btnVerMas').style.display = hasMoreRows ? 'inline-flex' : 'none';
-
-    updateKPIs(currentRows);
-    renderTable(currentRows);
+    $('#resultadosEstado').textContent = `${currentRows.length} registros cargados${errors.length ? ' · No se pudo completar la carga: ' + errors.join('; ') + '. Reintentá sin perder la página.' : ''}`;
+    if (!sources.some(source => source.enabled)) $('#resultadosEstado').textContent += ' · Esta combinación de Tipo, Estado y Cuenta no tiene registros compatibles. Cambiá los filtros.';
+    updateKPIs(currentRows); renderTable(currentRows);
+    if (errors.length && !currentRows.length) $('#rows').innerHTML = '<tr><td colspan="9">No se pudieron cargar los registros. Reintentá la carga.</td></tr>';
   }
 
   function normalizeTransferRows(rows) {
@@ -663,25 +724,31 @@
     }));
   }
 
-  function aplicarHoy() {
-    $('#fFecha').value = new Date().toISOString().split('T')[0];
-    loadPagos(true);
-    toast('Filtro aplicado: hoy');
+  function aplicarPeriodo(periodo) {
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
+    let desde = today;
+    if (periodo === 'semana') {
+      const date = new Date(today + 'T12:00:00Z');
+      date.setUTCDate(date.getUTCDate() - 6);
+      desde = date.toISOString().slice(0,10);
+    }
+    if (periodo === 'mes') desde = today.slice(0,8) + '01';
+    $('#fDesde').value = desde; $('#fHasta').value = today;
+    return loadPagos(true);
   }
 
+  function aplicarHoy() { return aplicarPeriodo('hoy'); }
+
   function limpiarFiltros() {
-    $('#fFecha').value = '';
-    $('#fEstado').value = '';
-    $('#fChofer').value = '';
-    if ($('#fEmpresa')) $('#fEmpresa').value = '';
-    if ($('#fCuenta')) $('#fCuenta').value = '';
-    loadPagos(true);
-    toast('Filtros limpiados');
+    const hadEmpresa = !!$('#fEmpresa').value;
+    for (const id of ['fBuscar','fDesde','fHasta','fTipo','fEstado','fChofer','fEmpresa','fCuenta']) $('#' + id).value = '';
+    if (hadEmpresa) loadCuentasBancarias();
+    return loadPagos(true);
   }
 
   function cargarMas() {
     if (!hasMoreRows) return;
-    loadPagos(false);
+    return loadPagos(false);
   }
     
   function updateKPIs(list, resumen = null) {
@@ -1085,24 +1152,14 @@
   }
 
   function csvCell(v) {
-    const s = String(v == null ? '' : v).replace(/"/g, '""');
+    let value = String(v == null ? '' : v);
+    if (/^[\s\u0000-\u001f]*[=+@-]/.test(value) || /^[\t\r\n]/.test(value)) value = "'" + value;
+    const s = value.replace(/"/g, '""');
     return `"${s}"`;
   }
 
   function exportarCSV() {
-    const fecha = $('#fFecha')?.value || '';
-    const estadoFiltro = $('#fEstado')?.value || '';
-    const chofer = $('#fChofer')?.value || '';
-    const empresa = $('#fEmpresa')?.value || '';
-    const cuenta = $('#fCuenta')?.value || '';
-
-    const q = new URLSearchParams();
-    if (fecha) q.set('fecha', fecha);
-    if (chofer) q.set('chofer_id', chofer);
-    if (empresa) q.set('empresa_id', empresa);
-    if (cuenta) q.set('cuenta_bancaria_id', cuenta);
-    if (estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') q.set('estado', estadoFiltro);
-    if (estadoFiltro === 'en_revision') q.set('estado_revision', 'en_revision');
+    const { desde = '', hasta = '' } = appliedFilters || {};
 
     const headers = ['tipo','fecha','pedido_id','cliente','telefono','monto','metodo_pago','estado','referencia','cuenta_bancaria','cuenta_confianza'];
     const csv = [headers.map(csvCell).join(',')]
@@ -1127,10 +1184,10 @@
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `pagos-${fecha || new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `pagos-cargados-${desde || "inicio"}_${hasta || "sin-limite"}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
-    toast('CSV generado');
+    toast(`${currentRows.length} registros cargados exportados`);
   }
 
   function toast(msg) {

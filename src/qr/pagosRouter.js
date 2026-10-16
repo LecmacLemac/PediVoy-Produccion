@@ -4,6 +4,7 @@ import { withAuth, isSuper, checkLicencia, resolveEmpresaId } from '../services.
 import { query } from '../db.js';
 import { crearPagoParaPedido, listarPagosPorPedido } from '../qr/pagosService.js';
 import { requireCanonicalBackofficeRole } from '../routes/canonicalBackofficeRole.js';
+import { parsePagosListQuery, appendPagosSearch, appendPagosDates, appendPagosCursor, pagosCursorFechaSql } from '../pagosListFilters.js';
 
 const router = Router();
 
@@ -25,13 +26,15 @@ router.use((req, res, next) => {
  *
  * GET /api/admin/qr/pagos
  */
-router.get('/pagos', async (req, res) => {
+export function createListQrPagosHandler({ queryFn = query } = {}) {
+  return async (req, res) => {
   try {
     const role = String(req.user?.role || '').toLowerCase();
     if (!isSuper(req) && role !== 'admin') {
       return res.status(403).json({ error: 'No autorizado.' });
     }
 
+    const listFilters = parsePagosListQuery(req.query);
     const esSuperUser = isSuper(req);
     const empresaId = esSuperUser && !req.query?.empresa_id
       ? null
@@ -40,10 +43,9 @@ router.get('/pagos', async (req, res) => {
       return res.status(400).json({ error: 'empresa_id inválido' });
     }
 
-    const fecha = (req.query.fecha || '').toString().slice(0, 10);
     const estado = (req.query.estado || '').toString().trim().toLowerCase();
     const choferId = Number(req.query.chofer_id || 0) || null;
-    const beforeId = Number(req.query.before_id || 0) || null;
+    const beforeId = listFilters.beforeId;
     const limitRaw = Number(req.query.limit || 0) || 0;
     const limit = Math.min(Math.max(limitRaw, 0), 1000);
 
@@ -69,18 +71,19 @@ router.get('/pagos', async (req, res) => {
         pp.settlement_at,
         pp.created_at,
         pp.updated_at,
+        ${pagosCursorFechaSql('COALESCE(pp.settlement_at, pp.updated_at, pp.created_at)')},
         pe.cliente,
         pe.telefono,
         z.nombre AS zona_nombre,
         c.nombre AS chofer_nombre
       FROM pedido_pagos pp
       LEFT JOIN pedidos p           ON p.id = pp.pedido_id AND p.empresa_id = pp.empresa_id
-      LEFT JOIN puntos_entrega pe   ON pe.id = p.punto_entrega_id
-      LEFT JOIN zonas_geograficas z ON z.id = COALESCE(p.zona_id, pe.zona_id)
-      LEFT JOIN choferes c          ON c.id = pp.chofer_id
+      LEFT JOIN puntos_entrega pe   ON pe.id = p.punto_entrega_id AND pe.empresa_id = pp.empresa_id
+      LEFT JOIN zonas_geograficas z ON z.id = COALESCE(p.zona_id, pe.zona_id) AND z.empresa_id = pp.empresa_id
+      LEFT JOIN choferes c          ON c.id = pp.chofer_id AND c.empresa_id = pp.empresa_id
       WHERE 1=1
     `;
-    const params = [];
+    let params = [];
     let idx = 1;
 
     if (!esSuperUser || empresaId) {
@@ -88,12 +91,8 @@ router.get('/pagos', async (req, res) => {
       params.push(empresaId);
     }
 
-    if (fecha) {
-      sql += ` AND COALESCE(pp.settlement_at, pp.updated_at, pp.created_at) >= $${idx}::date
-               AND COALESCE(pp.settlement_at, pp.updated_at, pp.created_at) < ($${idx}::date + INTERVAL '1 day')`;
-      params.push(fecha);
-      idx += 1;
-    }
+    ({ sql, params, idx } = appendPagosDates({ sql, params, idx, filters: listFilters,
+      date: 'COALESCE(pp.settlement_at, pp.updated_at, pp.created_at)' }));
 
     if (choferId) {
       sql += ` AND pp.chofer_id = $${idx++}`;
@@ -106,18 +105,19 @@ router.get('/pagos', async (req, res) => {
       sql += ` AND pp.estado NOT IN ('pagado', 'aprobado', 'acreditado', 'approved')`;
     }
 
-    if (beforeId) {
-      sql += ` AND pp.id < $${idx++}`;
-      params.push(beforeId);
-    }
+    ({ sql, params, idx } = appendPagosSearch({ sql, params, idx, q: listFilters.q,
+      pedido: 'pp.pedido_id', references: ['pp.provider_payment_id', 'pp.provider_order_id'] }));
 
-    sql += ` ORDER BY COALESCE(pp.settlement_at, pp.updated_at, pp.created_at) DESC, pp.id DESC`;
+    ({ sql, params, idx } = appendPagosCursor({ sql, params, idx, filters: listFilters,
+      date: 'COALESCE(pp.settlement_at, pp.updated_at, pp.created_at)', id: 'pp.id' }));
+
+    sql += ` ORDER BY COALESCE(pp.settlement_at, pp.updated_at, pp.created_at, '-infinity'::timestamptz) DESC, pp.id DESC`;
     if (limit > 0) {
       sql += ` LIMIT $${idx++}`;
       params.push(limit);
     }
 
-    const rows = await query(sql, params);
+    const rows = await queryFn(sql, params, { sensitive: true });
     if (limit > 0) {
       res.setHeader('X-Page-Limit', String(limit));
       res.setHeader('X-Page-Count', String(rows.length));
@@ -125,10 +125,13 @@ router.get('/pagos', async (req, res) => {
     }
     return res.json(rows);
   } catch (err) {
-    console.error('Error listando pagos QR', err);
+    if (err.statusCode === 400) return res.status(400).json({ error: err.message });
+    console.error('Error listando pagos QR', { code: err.code || 'QUERY_FAILED' });
     return res.status(500).json({ error: 'Error interno' });
   }
-});
+  };
+}
+router.get('/pagos', createListQrPagosHandler());
 
 /**
  * Lista pagos para un pedido.

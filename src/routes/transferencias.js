@@ -16,6 +16,7 @@ import { query } from '../db.js';
 import { notificarPedidoTransferencia } from '../services/notificacionesPedidos.js';
 import { aprobarComprobanteManualAtomicoPg, asociarComprobantePedidoPg } from '../transferenciasServices.js';
 import { buildReceiptStatusMessage } from '../transferenciasPipeline.js';
+import { parsePagosListQuery, appendPagosSearch, appendPagosDates, appendPagosCursor, pagosCursorFechaSql } from '../pagosListFilters.js';
 
 export function requireTransferApprovalRole(req, res, next) {
   const role = req.user?.role;
@@ -304,6 +305,8 @@ export function createTransferenciasRouter({
       sql += ` AND (COALESCE(ct.validado, 0) = 1 OR COALESCE(ct.procesado, FALSE) = TRUE)`;
     } else if (estado === 'pendiente') {
       sql += ` AND COALESCE(ct.validado, 0) <> 1 AND COALESCE(ct.procesado, FALSE) <> TRUE`;
+    } else if (estado === 'orphan') {
+      sql += ` AND ct.pedido_id IS NULL`;
     }
 
     if (estadoRevision && ['pendiente', 'en_revision', 'aprobado', 'rechazado', 'duplicado'].includes(estadoRevision)) {
@@ -381,19 +384,19 @@ export function createTransferenciasRouter({
   // LISTAR TRANSFERENCIAS
   router.get('/', async (req, res) => {
     try {
+      const listFilters = parsePagosListQuery(req.query);
       await ensureSchemaPromise;
       const { empresa_id } = req.query || {};
       const esSuperUser = isSuper(req);
       const myEmpresa = getEmpresaIdFromToken(req);
 
-      const fecha = (req.query.fecha || '').toString().slice(0, 10);
       const estado = (req.query.estado || '').toString().trim().toLowerCase();
       const estadoRevision = (req.query.estado_revision || '').toString().trim().toLowerCase();
       const cuentaBancariaId = (req.query.cuenta_bancaria_id || '').toString().trim();
       const choferId = Number(req.query.chofer_id || 0) || null;
       const limitRaw = Number(req.query.limit || 0) || 0;
       const offsetRaw = Number(req.query.offset || 0) || 0;
-      const beforeId = Number(req.query.before_id || 0) || null;
+      const beforeId = listFilters.beforeId;
       const limit = Math.min(Math.max(limitRaw, 0), 1000);
       const offset = Math.max(offsetRaw, 0);
 
@@ -403,6 +406,7 @@ export function createTransferenciasRouter({
           ct.id,
           ct.empresa_id,
           ct.fecha,
+          ${pagosCursorFechaSql('ct.fecha')},
           COALESCE(NULLIF(ct.monto, 0), p.monto, 0) AS monto,
           ct.monto AS monto_comprobante,
           p.monto AS monto_pedido,
@@ -440,9 +444,9 @@ export function createTransferenciasRouter({
         LEFT JOIN pedidos p           ON p.id = ct.pedido_id AND p.empresa_id = ct.empresa_id
         LEFT JOIN puntos_entrega pe   ON pe.id = p.punto_entrega_id AND pe.empresa_id = ct.empresa_id
         LEFT JOIN zonas_geograficas z ON z.id = ct.zona_id AND z.empresa_id = ct.empresa_id
-        LEFT JOIN usuarios uv         ON uv.id = ct.verified_by
+        LEFT JOIN usuarios uv         ON uv.id = ct.verified_by AND uv.empresa_id = ct.empresa_id
         LEFT JOIN empresa_cuentas_bancarias cb ON cb.id = ct.cuenta_bancaria_id AND cb.empresa_id = ct.empresa_id
-        WHERE 1=1
+        WHERE LOWER(COALESCE(ct.metodo_pago, p.metodo_pago, 'transferencia')) NOT LIKE '%efec%'
       `;
 
       let params = [];
@@ -452,15 +456,16 @@ export function createTransferenciasRouter({
         sql,
         params,
         idx,
-        filters: { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision, cuentaBancariaId }
+        filters: { esSuperUser, myEmpresa, empresa_id, choferId, estado, estadoRevision, cuentaBancariaId }
       }));
 
-      if (beforeId) {
-        sql += ` AND ct.id < $${idx++}`;
-        params.push(beforeId);
-      }
+      ({ sql, params, idx } = appendPagosDates({ sql, params, idx, filters: listFilters, date: 'ct.fecha' }));
+      ({ sql, params, idx } = appendPagosSearch({ sql, params, idx, q: listFilters.q,
+        phones: ['pe.telefono', 'ct.telefono'], pedido: 'ct.pedido_id', references: ['ct.nro_operacion'] }));
 
-      sql += ` ORDER BY ct.fecha DESC, ct.id DESC`;
+      ({ sql, params, idx } = appendPagosCursor({ sql, params, idx, filters: listFilters, date: 'ct.fecha', id: 'ct.id' }));
+
+      sql += ` ORDER BY COALESCE(ct.fecha, '-infinity'::timestamptz) DESC, ct.id DESC`;
       if (limit > 0) {
         sql += ` LIMIT $${idx++}`;
         params.push(limit);
@@ -470,7 +475,7 @@ export function createTransferenciasRouter({
         }
       }
 
-      const rows = await query(sql, params);
+      const rows = await query(sql, params, { sensitive: true });
       if (limit > 0) {
         res.setHeader('X-Page-Limit', String(limit));
         res.setHeader('X-Page-Offset', String(offset));
@@ -479,13 +484,8 @@ export function createTransferenciasRouter({
       }
       res.json(rows);
     } catch (e) {
-      console.error('Error listando transferencias:', e?.message || e, {
-        estado: req.query?.estado,
-        estado_revision: req.query?.estado_revision,
-        empresa_id: req.query?.empresa_id,
-        chofer_id: req.query?.chofer_id,
-        fecha: req.query?.fecha
-      });
+      if (e.statusCode === 400) return res.status(400).json({ error: e.message });
+      console.error('Error listando transferencias:', { code: e.code || 'QUERY_FAILED' });
       res.status(500).json({ error: 'Error listando transferencias' });
     }
   });
@@ -493,14 +493,13 @@ export function createTransferenciasRouter({
   // PEDIDOS CON PAGO POR TRANSFERENCIA SIN COMPROBANTE ADJUNTO
   router.get('/sin-comprobante', async (req, res) => {
     try {
+      const listFilters = parsePagosListQuery(req.query);
       const { empresa_id } = req.query || {};
       const esSuperUser = isSuper(req);
       const myEmpresa = getEmpresaIdFromToken(req);
 
-      const fecha = (req.query.fecha || '').toString().slice(0, 10);
       const choferId = Number(req.query.chofer_id || 0) || null;
       const limitRaw = Number(req.query.limit || 0) || 0;
-      const beforeId = Number(req.query.before_id || 0) || null;
       const limit = Math.min(Math.max(limitRaw, 0), 1000);
 
       let sql = `
@@ -508,6 +507,7 @@ export function createTransferenciasRouter({
           p.id,
           p.id AS pedido_id,
           p.fecha,
+          ${pagosCursorFechaSql('p.fecha')},
           p.estado,
           p.monto,
           p.metodo_pago,
@@ -519,9 +519,9 @@ export function createTransferenciasRouter({
           z.nombre AS zona_nombre,
           c.nombre AS chofer_nombre
         FROM pedidos p
-        LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-        LEFT JOIN zonas_geograficas z ON z.id = p.zona_id
-        LEFT JOIN choferes c ON c.id = p.chofer_id
+        LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id AND pe.empresa_id = p.empresa_id
+        LEFT JOIN zonas_geograficas z ON z.id = p.zona_id AND z.empresa_id = p.empresa_id
+        LEFT JOIN choferes c ON c.id = p.chofer_id AND c.empresa_id = p.empresa_id
         WHERE LOWER(COALESCE(p.metodo_pago, '')) LIKE 'transfer%'
           AND COALESCE(p.estado, '') <> 'cancelado'
           AND NOT EXISTS (
@@ -533,7 +533,7 @@ export function createTransferenciasRouter({
           )
       `;
 
-      const params = [];
+      let params = [];
       let idx = 1;
 
       if (!esSuperUser) {
@@ -544,32 +544,28 @@ export function createTransferenciasRouter({
         params.push(Number(empresa_id));
       }
 
-      if (fecha) {
-        sql += ` AND p.fecha >= $${idx}::date AND p.fecha < ($${idx}::date + INTERVAL '1 day')`;
-        params.push(fecha);
-        idx += 1;
-      }
+      ({ sql, params, idx } = appendPagosDates({ sql, params, idx, filters: listFilters, date: 'p.fecha' }));
 
       if (choferId) {
         sql += ` AND p.chofer_id = $${idx++}`;
         params.push(choferId);
       }
 
-      if (beforeId) {
-        sql += ` AND p.id < $${idx++}`;
-        params.push(beforeId);
-      }
+      ({ sql, params, idx } = appendPagosCursor({ sql, params, idx, filters: listFilters, date: 'p.fecha', id: 'p.id' }));
 
-      sql += ` ORDER BY p.fecha DESC, p.id DESC`;
+      ({ sql, params, idx } = appendPagosSearch({ sql, params, idx, q: listFilters.q, pedido: 'p.id' }));
+
+      sql += ` ORDER BY COALESCE(p.fecha, '-infinity'::timestamptz) DESC, p.id DESC`;
       if (limit > 0) {
         sql += ` LIMIT $${idx++}`;
         params.push(limit);
       }
 
-      const rows = await query(sql, params);
+      const rows = await query(sql, params, { sensitive: true });
       res.json(rows);
     } catch (e) {
-      console.error('Error listando transferencias sin comprobante:', e?.message || e);
+      if (e.statusCode === 400) return res.status(400).json({ error: e.message });
+      console.error('Error listando transferencias sin comprobante:', { code: e.code || 'QUERY_FAILED' });
       res.status(500).json({ error: 'Error listando transferencias sin comprobante' });
     }
   });
