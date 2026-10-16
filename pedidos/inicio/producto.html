@@ -538,6 +538,7 @@
           </div>
         </div>
 
+        <section id="menu-product"></section>
       </form>
       <div class="modal-footer">
         <button id="btnCancelModal" class="btn">Cancelar</button>
@@ -548,6 +549,7 @@
 
   <div id="toast" class="toast"></div>
 
+  <script src="menu-admin.js"></script>
   <script>
     // --- Utils ---
     const $ = (s) => document.querySelector(s);
@@ -577,6 +579,9 @@
     let products = [];
     let saveBusy = false;
     let deleteBusy = false;
+    let loadGeneration = 0;
+    let editorGeneration = 0;
+    const menuProduct = MenuAdmin.createProduct(document.getElementById("menu-product"), () => STATE.isSuper ? $("#empSel").value : STATE.user?.empresa_id);
 
     // Modo seguro: auth por cookie httpOnly
     const authFetch = (url, opts = {}) => {
@@ -609,6 +614,8 @@
 
     // --- Main Functions ---
     async function load() {
+      const generation = ++loadGeneration;
+      closeModal();
       let url = '/api/productos';
       const empId = $('#empSel')?.value;
       
@@ -620,7 +627,10 @@
         return;
       }
 
+      products = [];
+      render();
       const data = await api(url);
+      if (generation !== loadGeneration) return;
       if (Array.isArray(data)) {
         // Ordenar: Categoría -> Orden -> Nombre
         products = data.slice().sort((a, b) => {
@@ -748,6 +758,7 @@
         return;
       }
       $('#modal').classList.add('open');
+      ++editorGeneration;
       $('#modalTitle').textContent = 'Nuevo Producto';
       $('#formProd').reset();
       $('#p_id').value = '';
@@ -789,18 +800,21 @@
       $('#p_promo_once_valid_from').disabled = true;
       $('#p_promo_once_valid_to').disabled = true;
 
+      menuProduct.open();
       $('#p_nombre').focus();
     }
 
-    function closeModal() { $('#modal').classList.remove('open'); }
+    function closeModal() { ++editorGeneration; menuProduct.close(); $('#modal').classList.remove('open'); }
 
     function edit(id) {
       const p = products.find((x) => x.id === id);
       if (!p) return;
 
       $('#modal').classList.add('open');
+      ++editorGeneration;
       $('#modalTitle').textContent = 'Editar Producto';
 
+      menuProduct.open(p);
       $('#p_id').value = p.id;
       $('#p_nombre').value = p.nombre;
       $('#p_sku').value = p.sku || '';
@@ -867,6 +881,8 @@
     async function save() {
       if (saveBusy) return;
       const id = $('#p_id').value;
+      const generation = editorGeneration;
+      const tenant = STATE.isSuper ? $('#empSel').value : STATE.user?.empresa_id;
 
       // Armar config_activo a partir del formulario
       const cfg = {
@@ -961,6 +977,11 @@
         promo_config,
       };
 
+      try {
+        const availability = menuProduct.read();
+        if (availability !== undefined) body.disponibilidad_config = availability;
+      } catch (e) { toast(e.message); return; }
+
       if (!body.nombre || !body.precio) { toast('Nombre y Precio requeridos'); return; }
       if (promoEnabled && !promoGiftProductId && !Number.isFinite(promoDiscountPercent) && !Number.isFinite(promoDiscountAmount)) {
         toast('Definí un regalo o un descuento para activar la promo');
@@ -1005,6 +1026,7 @@
 
       try {
         const res = await api(url, { method, body: JSON.stringify(body) });
+        if (generation !== editorGeneration || String(tenant) !== String(STATE.isSuper ? $('#empSel').value : STATE.user?.empresa_id)) return;
         if (res && !res.error) {
           toast(id ? '✅ Actualizado' : '✅ Creado');
           closeModal();

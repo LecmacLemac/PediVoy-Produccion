@@ -2,6 +2,7 @@
 // Rutas públicas para landings (sin auth)
 
 import express from 'express';
+import { filterMenuCatalog } from '../services/menuOrderAvailability.js';
 import {
   assertPublicPedidoEmpresaActive,
   resolvePublicPedidoEmpresaId,
@@ -61,6 +62,7 @@ export function createPublicLandingRouter(deps) {
 
   // GET /api/public/productos
   router.get('/productos', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
     try {
       const empresaId = await resolvePublicPedidoEmpresaId(req, query);
       const scope = req.query?.scope; // 'landing' o null
@@ -79,7 +81,7 @@ export function createPublicLandingRouter(deps) {
       sql += ` ORDER BY orden ASC NULLS LAST, id ASC`;
 
       const rows = await query(sql, [empresaId]);
-      return res.json(rows);
+      return res.json(await filterMenuCatalog(query, {empresaId, products: rows, deliveryDate: req.query.fecha_entrega, channel: scope === 'landing' ? 'landing' : 'catalog'}));
     } catch (e) {
       console.error('Error public products:', e);
       return publicTenantFailure(res, e, 'Error cargando catálogo');

@@ -1,4 +1,5 @@
 import express from 'express';
+import { filterMenuCatalog } from '../services/menuOrderAvailability.js';
 import crypto from 'node:crypto';
 import { normalizePhone } from '../services.js';
 import {
@@ -188,6 +189,7 @@ export function createPublicLegacyCatalogRouter({ query, withTransaction }) {
   });
 
   router.get('/productos', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
     try {
       const empresa_id = await resolvePublicPedidoEmpresaId(req, query);
       const scope = req.query.scope || 'all';
@@ -207,7 +209,7 @@ export function createPublicLegacyCatalogRouter({ query, withTransaction }) {
       sql += ` ORDER BY orden ASC NULLS LAST, id ASC`;
 
       const rows = await query(sql, [empresa_id]);
-      return res.json(rows);
+      return res.json(await filterMenuCatalog(query, {empresaId: empresa_id, products: rows, deliveryDate: req.query.fecha_entrega, channel: scope === 'landing' ? 'landing' : 'catalog'}));
     } catch (e) {
       console.error(e);
       return publicTenantFailure(res, e, 'No se pudieron obtener productos');

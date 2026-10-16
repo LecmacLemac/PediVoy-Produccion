@@ -8,6 +8,7 @@ import { pool as defaultPool } from '../db.js';
 import { normalizeWhatsappPhone } from '../core/format.js';
 import { empresaWhatsappConfigLockNamespace } from './companyConfigLock.js';
 import { isWhatsappCloudActive as matchesCanonicalCloudPolicy } from './companyWebPolicy.js';
+import { menuFeatureEnabled } from '../menuAvailability.js';
 import { parseProactiveNotificationCorrelationId } from './proactiveCorrelation.js';
 
 const VALID_REPLY_JID = /^[^\s@]+@(c\.us|lid)$/i;
@@ -197,11 +198,28 @@ async function enqueuePreparedWithClient({
   const requestedTransportOrigin = correlatedTransportOrigin || requiredTransportOrigin;
   let transportOrigin = requestedTransportOrigin || 'general';
   if (normalizedEmpresaId !== null && requestedTransportOrigin !== 'general') {
-    await clientRows(
-      client,
-      'SELECT pg_advisory_xact_lock($1::integer, $2::integer) AS locked',
-      [empresaWhatsappConfigLockNamespace, normalizedEmpresaId],
-    );
+    if (menuFeatureEnabled()) {
+      // A caller can already own the menu barrier, while configuration owns
+      // the session advisory before requesting that barrier. Never wait here:
+      // reject admission before config/outbox access so the owner rolls back
+      // the whole callback and retries (native withTransaction handles 40001).
+      // Busy supervisor work may outlast bounded retries; callers must retry
+      // the transaction, not suppress its notification or commit partial work.
+      const admission = await clientRows(
+        client,
+        'SELECT pg_try_advisory_xact_lock($1::integer, $2::integer) AS locked',
+        [empresaWhatsappConfigLockNamespace, normalizedEmpresaId],
+      );
+      if (!Array.isArray(admission) || admission.length !== 1 || admission[0]?.locked !== true) {
+        throw new WppTransportConfigError('40001');
+      }
+    } else {
+      await clientRows(
+        client,
+        'SELECT pg_advisory_xact_lock($1::integer, $2::integer) AS locked',
+        [empresaWhatsappConfigLockNamespace, normalizedEmpresaId],
+      );
+    }
     const companies = await clientRows(
       client,
       'SELECT config_integraciones FROM empresas WHERE id = $1::integer LIMIT 1',

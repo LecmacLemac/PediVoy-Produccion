@@ -37,7 +37,8 @@ async function withServer(app, fn) {
   }
 }
 
-test('POST /public/pedidos crea pedido válido', async () => {
+test('POST /public/pedidos crea pedido válido', async t => {
+  t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-08T12:00:00Z')});
   const legacyLongCustomer = 'Hidro Cliente ' + 'C'.repeat(210);
   const calls = [];
   const query = async (sql, params = []) => {

@@ -215,6 +215,7 @@ test('mounts derivados del código resuelven paths productivos finales únicos',
   assert.equal(mounted.length, inventory.length);
   for (const endpoint of [
     'POST /api/empresas/:id/landing-page',
+    'PUT /api/menu/config',
     'POST /public/pedidos',
     'POST /api/webhooks/pagos',
     'POST /api/webhooks/pagos/:proveedor',

@@ -1,4 +1,5 @@
 import express from 'express';
+import { menuFeatureEnabled } from './menuAvailability.js';
 import fs from 'node:fs';
 import path from 'node:path';
 // MEJORA DE CONTROL: Importamos directo de db.js para máxima estabilidad
@@ -136,7 +137,7 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
         p.empresa_id,
         p.estado,
         p.fecha,
-        p.fecha_entrega,
+        p.fecha_entrega,${menuFeatureEnabled() ? " to_char(p.fecha_entrega_programada, 'YYYY-MM-DD') AS fecha_entrega_programada, to_char(p.fecha_entrega_estimada, 'YYYY-MM-DD') AS fecha_entrega_estimada," : ''}
         p.chofer_id,
         p.monto,
         p.metodo_pago,
@@ -258,6 +259,7 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
       estado: pedido.estado,
       fecha: pedido.fecha,
       fecha_entrega: pedido.fecha_entrega,
+      ...(menuFeatureEnabled() ? {fecha_entrega_programada:pedido.fecha_entrega_programada,fecha_entrega_estimada:pedido.fecha_entrega_estimada} : {}),
       monto: Number(pedido.monto || 0) || Math.round(totalItems * 100) / 100,
       metodo_pago: pedido.metodo_pago || null,
       pago_estado: mapPublicPaymentStatus({

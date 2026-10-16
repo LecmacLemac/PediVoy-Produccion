@@ -1,3 +1,5 @@
+import { validatePersistedMenuOrder } from '../services/menuOrderAvailability.js';
+import { menuFeatureEnabled } from '../menuAvailability.js';
 import {
   lockProductIdentityNamespaces,
   normalizeProductIdentityName,
@@ -88,6 +90,10 @@ export async function resolveAndLockPedidoProducts(txQuery, { empresaId, request
 }
 
 export async function replacePedidoItems(txQuery, { pedidoId, empresaId, canonicalItems }) {
+  const baselineItems = menuFeatureEnabled() ? await txQuery(`SELECT i.producto_id, i.cantidad
+    FROM items_pedido i JOIN pedidos p ON p.id=i.pedido_id
+    WHERE p.id=$1 AND p.empresa_id=$2 AND p.fecha_entrega_programada IS NOT NULL
+      AND p.estado NOT IN ('cancelado','entregado') ORDER BY i.id`, [pedidoId,empresaId]) : null;
   await txQuery('DELETE FROM items_pedido WHERE pedido_id = $1', [pedidoId]);
   for (const item of canonicalItems) {
     const inserted = await txQuery(
@@ -113,5 +119,6 @@ export async function replacePedidoItems(txQuery, { pedidoId, empresaId, canonic
     [pedidoId, empresaId]
   );
   if (updated.length !== 1) throw itemsError(409, 'El pedido cambió durante la actualización');
+  await validatePersistedMenuOrder(txQuery, {pedidoId,empresaId,baselineItems});
   return updated[0];
 }

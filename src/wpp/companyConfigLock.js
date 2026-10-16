@@ -1,3 +1,5 @@
+import { lockMenuWriteBarrier } from '../services/menuOrderAvailability.js';
+
 const EMPRESA_WHATSAPP_CONFIG_LOCK_NAMESPACE = 0x57505043;
 
 function normalizeEmpresaId(empresaId) {
@@ -43,6 +45,7 @@ export async function runTransactionOnLockedClient(client, work) {
   try {
     await client.query('BEGIN');
     began = true;
+    await lockMenuWriteBarrier(client.query.bind(client));
     const result = await work(txQuery, client);
     commitAttempted = true;
     await client.query('COMMIT');

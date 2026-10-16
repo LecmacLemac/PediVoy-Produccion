@@ -7,6 +7,11 @@ let telefono = '';
 let lastCompaniesLookup = '';
 const cart = [];
 let catalogProducts = [];
+let menuController = null;
+let menuAutoAddConsumed = false;
+let appSubmissionPending = false;
+let appSubmissionFingerprint = '';
+let appSubmissionId = '';
 let activeCatalogFilter = 'all';
 let paymentMethod = 'efectivo';
 let ordersTimer = null;
@@ -267,7 +272,7 @@ function updateCheckoutState() {
   const cliente = $('#checkout-cliente')?.value?.trim() || '';
   const direccion = $('#checkout-direccion')?.value?.trim() || '';
   const tel = $('#checkout-telefono')?.value?.trim() || telefono || '';
-  const ready = cart.length > 0 && cliente && direccion && onlyDigits(tel).length >= 8;
+  const ready = !appSubmissionPending && !menuController?.busy && cart.length > 0 && cliente && direccion && onlyDigits(tel).length >= 8;
   btn.disabled = !ready;
   btn.style.opacity = ready ? '1' : '.55';
   btn.style.cursor = ready ? 'pointer' : 'not-allowed';
@@ -499,16 +504,24 @@ function detectOrderStateChanges(orders = []) {
 }
 
 async function repeatOrder(orderId) {
+  const context = { tenant: getExplicitPublicTenantQuery().toString(), date: menuController?.date, products: catalogProducts, cart: JSON.stringify(cart) };
   try {
     const out = await j(withPublicTenant(`/api/public/app/orders/${orderId}/items`));
     const items = out.items || [];
+    if (context.tenant !== getExplicitPublicTenantQuery().toString() || context.date !== menuController?.date || context.products !== catalogProducts || context.cart !== JSON.stringify(cart)) return;
+    if (appSubmissionPending || menuController?.busy) return;
+    if (menuController?.enabled) {
+      const missing = items.filter(it => !catalogProducts.some(p => String(p.id) === String(it.producto_id) && menuController.allows(p, Number(it.cantidad || 1))));
+      if (missing.length) { alert('El pedido contiene productos no disponibles para la fecha del carrito. Elegí otra fecha o agregalos manualmente.'); return; }
+      if (cart.length && !confirm('¿Reemplazar el carrito para la fecha seleccionada?')) return;
+    }
     cart.length = 0;
     items.forEach((it, idx) => {
       cart.push({
-        id: `repeat-${orderId}-${idx}`,
-        nombre: it.producto,
+        id: menuController?.enabled ? Number(it.producto_id) : `repeat-${orderId}-${idx}`,
+        nombre: menuController?.enabled ? catalogProducts.find(p => String(p.id) === String(it.producto_id)).nombre : it.producto,
         producto_id: Number(it.producto_id || 0) || null,
-        precio: Number(it.precio_unitario || 0),
+        precio: Number(menuController?.enabled ? catalogProducts.find(p => String(p.id) === String(it.producto_id)).precio : it.precio_unitario || 0),
         cantidad: Number(it.cantidad || 1),
       });
     });
@@ -555,6 +568,7 @@ function renderOrders(orders = []) {
         <div>
           <div class="order-id">Pedido #${esc(o.id)}</div>
           <div class="order-meta">${fecha}</div>
+          ${PediVoyMenu.acceptedDate(o) ? `<div class="order-meta">Entrega programada: ${esc(PediVoyMenu.acceptedDate(o))}</div>` : ''}
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
           ${index === 0 ? '<span class="status-badge" style="background:#cffafe;color:#0f766e">Último pedido</span>' : ''}
@@ -675,6 +689,8 @@ function renderCart() {
 }
 
 function addToCart(p) {
+  const quantity = (cart.find(x => String(x.producto_id || x.id) === String(p.id))?.cantidad || 0) + 1;
+  if (appSubmissionPending || (menuController && !menuController.allows(p, quantity))) return alert('Producto sin disponibilidad o cupo para la fecha elegida.');
   const i = cart.findIndex((x) => String(x.id) === String(p.id));
   if (i >= 0) cart[i].cantidad += 1;
   else cart.push({ id: p.id, producto_id: Number(p.id || 0) || null, nombre: p.nombre, precio: Number(p.precio || 0), cantidad: 1 });
@@ -686,6 +702,8 @@ function addToCart(p) {
 function changeCartQty(id, delta) {
   const item = cart.find((x) => String(x.id) === String(id));
   if (!item) return;
+  if (appSubmissionPending || menuController?.busy) return;
+  if (delta > 0 && menuController && !menuController.allows(item, item.cantidad + delta)) return alert('No hay cupo suficiente.');
   item.cantidad += delta;
   if (item.cantidad <= 0) {
     const idx = cart.findIndex((x) => String(x.id) === String(id));
@@ -695,6 +713,7 @@ function changeCartQty(id, delta) {
 }
 
 function removeFromCart(id) {
+  if (appSubmissionPending || menuController?.busy) return;
   const idx = cart.findIndex((x) => String(x.id) === String(id));
   if (idx >= 0) cart.splice(idx, 1);
   renderCart();
@@ -724,10 +743,23 @@ async function loadEmpresa() {
 }
 
 async function loadCatalog() {
-  const rows = await j(withPublicTenant('/public/productos', { scope: 'catalog' }));
-  catalogProducts = Array.isArray(rows) ? rows : [];
-  renderCatalogFilters();
-  renderCatalog();
+  if (!menuController) menuController = PediVoyMenu.create({
+    root: $('#catalog-filters').parentElement, cartRoot: $('#step-cart'),
+    channel: new URLSearchParams(location.search).get('catalog_channel') === 'landing' ? 'landing' : 'catalog', tenant: () => getExplicitPublicTenantQuery().toString(),
+    url: withPublicTenant, request: j, cart: () => cart,
+    locked: () => appSubmissionPending,
+    onBusy: () => updateCheckoutState(),
+    onCommit: (rows) => { catalogProducts = rows; renderCatalogFilters(); renderCatalog(); renderCart(); },
+    onError: (message) => showOrderAlert(message),
+  });
+  await menuController.init();
+  if (menuController.enabled && !menuAutoAddConsumed) {
+    menuAutoAddConsumed = true;
+    const id = new URLSearchParams(location.search).get('add');
+    const product = catalogProducts.find(p => String(p.id) === id);
+    if (product) addToCart(product);
+    else if (id) showOrderAlert('El producto del enlace no está disponible para la fecha elegida.');
+  }
 }
 
 function renderCatalogFilters() {
@@ -780,7 +812,7 @@ function renderCatalog() {
     el.innerHTML = `
       ${imageUrl ? `<div class="prod-media"><img src="${esc(imageUrl)}" alt="${esc(p.nombre)}" loading="lazy" onerror="this.parentElement.style.display='none'" /></div>` : ''}
       <div class="prod-title">${esc(p.nombre)}</div>
-      <div class="prod-desc">${esc(p.descripcion || 'Disponible para pedido inmediato.')}</div>
+      <div class="prod-desc">${esc(p.descripcion || (menuController?.enabled && menuController.date > menuController.today ? `Disponible para el ${PediVoyMenu.formatDate(menuController.date)}.` : 'Disponible para pedido inmediato.'))}</div>
       <div class="prod-foot">
         <span class="price">${money(p.precio)}</span>
         <button class="btn btn-primary" data-id="${p.id}" style="padding:10px 14px;border-radius:14px">Agregar</button>
@@ -946,6 +978,7 @@ $('#btn-refresh-orders').addEventListener('click', async () => {
 });
 
 $('#btn-send').addEventListener('click', async () => {
+  if (appSubmissionPending) return;
   try {
     if (!cart.length) throw new Error('Carrito vacío');
 
@@ -960,6 +993,7 @@ $('#btn-send').addEventListener('click', async () => {
     if (onlyDigits(tel).length < 8) throw new Error('Completá un teléfono válido');
 
     const payload = {
+      ...(menuController?.payload() || {}),
       cliente,
       telefono: tel,
       direccion,
@@ -975,12 +1009,21 @@ $('#btn-send').addEventListener('click', async () => {
       })),
     };
 
+    if (menuController?.enabled) {
+      const fingerprint = JSON.stringify([getExplicitPublicTenantQuery().toString(), payload]);
+      if (appSubmissionFingerprint !== fingerprint) { appSubmissionFingerprint = fingerprint; appSubmissionId = crypto.randomUUID(); }
+      payload.submission_id = appSubmissionId;
+    }
+    appSubmissionPending = true;
+    updateCheckoutState();
+    menuController?.render();
     const out = await j(withPublicTenant('/public/pedidos'), {
       method: 'POST',
       body: JSON.stringify(payload),
     });
 
     cart.length = 0;
+    appSubmissionFingerprint = ''; appSubmissionId = '';
     renderCart();
     if (out?.referente?.codigo) {
       $('#codigo-referente').value = out.referente.codigo;
@@ -988,13 +1031,13 @@ $('#btn-send').addEventListener('click', async () => {
     } else {
       updateReferralSummary();
     }
-    await loadOrders();
+    await loadOrders().catch(() => {}); // El pedido ya fue aceptado; un fallo de lectura no es un fallo del envío.
     $('#quick-last-action').textContent = `Pedido #${out?.pedido?.id || ''} enviado`;
-    showOrderAlert(`Pedido enviado #${out?.pedido?.id || ''}`);
+    showOrderAlert(`Pedido enviado #${out?.pedido?.id || ''}${PediVoyMenu.acceptedDate(out?.pedido) ? ' · Entrega: ' + PediVoyMenu.acceptedDate(out.pedido) : ''}`);
     goToSection('step-orders');
   } catch (e) {
     alert(e.message);
-  }
+  } finally { appSubmissionPending = false; updateCheckoutState(); menuController?.render(); }
 });
 
 document.addEventListener('visibilitychange', () => {

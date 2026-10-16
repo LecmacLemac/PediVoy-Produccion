@@ -1,5 +1,11 @@
 [
   {
+    "source": "src/routes/menu.js",
+    "method": "PUT",
+    "path": "/config",
+    "classification": "admin_exacto"
+  },
+  {
     "source": "src/adm/activosRouter.js",
     "method": "POST",
     "path": "/",

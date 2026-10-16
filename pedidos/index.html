@@ -582,6 +582,7 @@
   <main class="container grid-layout">
     
     <section>
+      <div id="menu-selector"></div>
       <div class="search-wrap">
         <span class="search-icon">🔍</span>
         <input type="search" id="prodSearch" placeholder="¿Qué estás buscando hoy?">
@@ -706,9 +707,11 @@
   </div>
 
   <script src="/pedidos/info-tec/safe-storage.js"></script>
+  <script src="/pedidos/menu-programado.js"></script>
   <script>
     // --- Configuración Inicial ---
     const params = new URLSearchParams(location.search);
+    const catalogChannel = params.get('catalog_channel') === 'catalog' ? 'catalog' : 'landing';
     const rawPublicSlug = params.get('slug');
     const rawPublicEmpresaId = params.get('empresa_id');
     const publicSlug = typeof rawPublicSlug === 'string' ? rawPublicSlug.trim().toLowerCase() : '';
@@ -748,6 +751,9 @@
 
     let allProducts = [];
     let carrito = [];
+    let menuController = null;
+    let menuSubmissionFingerprint = '';
+    let menuSubmissionId = '';
     let recoveredContact = null;
     let phoneLookupSequence = 0;
     let phoneLookupPending = false;
@@ -996,7 +1002,10 @@
         setOrderingEnabled(true);
 
         const addId = params.get('add');
-        if (addId) setTimeout(() => checkAutoAdd(addId), 800);
+        const addDate = menuController?.date;
+        if (addId) setTimeout(() => {
+          if (!menuController?.busy && menuController?.date === addDate) checkAutoAdd(addId);
+        }, 800);
 
       } catch (e) {
         console.error('Error crítico en init:', e);
@@ -1008,19 +1017,17 @@
     }
 
     async function loadProducts() {
-      try {
-        const r = await fetch(
-          '/public/productos?empresa_id=' + encodeURIComponent(empresa_id) + '&scope=landing'
-        );
-        if (!r.ok) throw new Error('Error cargando productos');
-        const data = await r.json();
-        allProducts = Array.isArray(data) ? data : [];
-        renderFiltered(allProducts);
-        $('#loading').style.display = 'none';
-      } catch (err) {
-        console.error(err);
-        $('#loading').textContent = 'Error cargando productos.';
-      }
+      if (!menuController) menuController = PediVoyMenu.create({
+        root: $('#menu-selector'), cartRoot: cartEl.parentElement,
+        channel: catalogChannel, tenant: () => publicTenantParams.toString(),
+        url: (path, extra = {}) => { const q = new URLSearchParams(publicTenantParams); for (const [k,v] of Object.entries(extra)) q.set(k,v); return path + '?' + q; },
+        request: async (url, options) => { const r = await fetch(url, options); if (!r.ok) { const error = new Error('No se pudo cargar el menú. Reintentá sin perder el carrito.'); error.status = r.status; throw error; } return r.json(); },
+        cart: () => carrito, locked: () => orderSubmissionPending || orderSubmissionSucceeded,
+        onBusy: () => updateCheckoutActionState(),
+        onCommit: rows => { allProducts = rows; renderFiltered(rows); renderCart(); $('#loading').style.display = rows.length ? 'none' : 'block'; setOrderingEnabled(true); },
+        onError: message => toast(message),
+      });
+      await menuController.init();
     }
 
     function checkAutoAdd(id) {
@@ -1031,6 +1038,8 @@
     function renderFiltered(list) {
       const safeList = Array.isArray(list) ? list : [];
       if (!safeList.length) {
+        $('#sectionPromos').style.display = 'none'; $('#sectionProds').style.display = 'none';
+        $('#promosList').replaceChildren(); $('#prodsList').replaceChildren();
         $('#loading').textContent = 'No hay productos disponibles.';
         $('#loading').style.display = 'block';
         return;
@@ -1131,7 +1140,9 @@
 
     // --- 2. CARRITO ---
     function addToCart(p) {
-      const existing = carrito.find(it => it.producto === p.nombre);
+      const quantity = (carrito.find(it => Number(it.producto_id) === Number(p.id))?.cantidad || 0) + 1;
+      if (orderSubmissionPending || orderSubmissionSucceeded || (menuController && !menuController.allows(p, quantity))) return toast('Producto sin disponibilidad o cupo para la fecha elegida.');
+      const existing = carrito.find(it => menuController?.enabled ? String(it.producto_id) === String(p.id) : it.producto === p.nombre);
       if (existing) {
         existing.cantidad++;
         toast('Cantidad actualizada');
@@ -1187,6 +1198,8 @@
 
     function modCart(idx, delta) {
       if (!Number.isFinite(idx) || idx < 0 || idx >= carrito.length) return;
+      if (orderSubmissionPending || orderSubmissionSucceeded || menuController?.busy) return;
+      if (delta > 0 && menuController && !menuController.allows(carrito[idx], carrito[idx].cantidad + delta)) return toast('No hay cupo suficiente.');
       carrito[idx].cantidad += delta;
       if (carrito[idx].cantidad <= 0) carrito.splice(idx, 1);
       renderCart();
@@ -1218,6 +1231,7 @@
         && deliveryReady
         && !phoneLookupPending
         && !orderSubmissionPending
+        && !menuController?.busy
         && !orderSubmissionSucceeded;
       const totalText = currentCartTotal > 0 ? ARS.format(currentCartTotal) : '';
 
@@ -1413,14 +1427,22 @@
       const latNum = latRaw === '' ? null : Number(latRaw);
       const lngNum = lngRaw === '' ? null : Number(lngRaw);
 
+      let menuPayload;
+      try { menuPayload = menuController?.payload() || {}; } catch (err) { toast(err.message); return; }
       const payload = {
         ...data,
+        ...menuPayload,
         telefono: buildTelefonoDB(data.telefono),
         items: carrito,
         submission_id: getSubmissionId(),
         latitud: Number.isFinite(latNum) ? latNum : null,
         longitud: Number.isFinite(lngNum) ? lngNum : null
       };
+      if (menuController?.enabled) {
+        const fingerprint = JSON.stringify([publicTenantParams.toString(), { ...payload, submission_id: undefined }]);
+        if (fingerprint !== menuSubmissionFingerprint) { menuSubmissionFingerprint = fingerprint; menuSubmissionId = crypto.randomUUID(); }
+        payload.submission_id = menuSubmissionId;
+      }
       if (payload.latitud == null) delete payload.latitud;
       if (payload.longitud == null) delete payload.longitud;
 
@@ -1428,6 +1450,7 @@
       const mobileSubmitBtn = $('#mobSubmit');
       const originalText = submitBtn ? submitBtn.textContent : '';
       orderSubmissionPending = true;
+      menuController?.render();
       updateCheckoutActionState();
       if (submitBtn) submitBtn.textContent = 'Enviando pedido... 🚀';
       if (mobileSubmitBtn) mobileSubmitBtn.textContent = 'Enviando...';
@@ -1451,7 +1474,7 @@
         }
 
         orderSubmissionSucceeded = true;
-        toast('✅ Pedido enviado con éxito');
+        toast('✅ Pedido enviado con éxito' + (PediVoyMenu.acceptedDate(res.pedido) ? ' · Entrega: ' + PediVoyMenu.acceptedDate(res.pedido) : ''));
 
         if (res.pedido && res.pedido.id) {
           safeStorage.local.remove('submission_id'); 
@@ -1476,6 +1499,7 @@
         toast(err.message || 'Error al enviar el pedido');
       } finally {
         orderSubmissionPending = false;
+        menuController?.render();
         if (submitBtn) {
           submitBtn.textContent = originalText || 'Confirmar pedido';
         }

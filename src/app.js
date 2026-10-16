@@ -13,6 +13,7 @@ import { mountApiModules } from './routes/mountApiModules.js';
 import { personalAgentHttpBoundary } from './agents/httpBoundary.js';
 import { createPublicLegacyPedidosRouter } from './routes/publicLegacyPedidos.js';
 import { createPublicLegacyCatalogRouter } from './routes/publicLegacyCatalog.js';
+import { createPublicMenuRouter } from './routes/menu.js';
 import { createPublicLegacyMarketplaceRouter } from './routes/publicLegacyMarketplace.js';
 import { registerPublicLegacyCreatePedidoRoute } from './routes/publicLegacyCreatePedido.js';
 import { toNum, inRange, round, buildOrderSummary, getAliasEmpresa } from './public/pedidosLegacyHelpers.js';
@@ -358,6 +359,7 @@ export function createApp(deps) {
     pool,
     withTransaction,
     withAuth,
+    checkLicencia,
     isSuper,
     getEmpresaIdFromToken,
     resolveEmpresaId,
@@ -381,6 +383,7 @@ export function createApp(deps) {
   });
 
   // Endpoints públicos migrados a módulos dedicados
+  app.use('/public', createPublicMenuRouter({ query }));
   app.use('/public', createPublicLegacyCatalogRouter({ query, withTransaction }));
   app.use('/public', createPublicLegacyMarketplaceRouter({ query }));
   app.use('/public', createPublicLegacyPedidosRouter({ query, withTransaction }));

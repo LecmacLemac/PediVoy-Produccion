@@ -1,4 +1,5 @@
 import express from 'express';
+import { menuFeatureEnabled } from '../menuAvailability.js';
 import { z } from 'zod';
 
 function onlyDigits(v) {
@@ -147,7 +148,7 @@ export function createPublicLegacyPedidosRouter({ query, withTransaction }) {
       }
 
       const base = await query(
-        `SELECT p.id, p.estado, p.fecha, p.empresa_id, p.tracking_token,
+        `SELECT p.id, p.estado, p.fecha, p.empresa_id, p.tracking_token,${menuFeatureEnabled() ? " to_char(p.fecha_entrega_programada, 'YYYY-MM-DD') AS fecha_entrega_programada, to_char(p.fecha_entrega_estimada, 'YYYY-MM-DD') AS fecha_entrega_estimada," : ''}
                 pe.cliente, pe.direccion, pe.latitud, pe.longitud, p.monto
          FROM pedidos p
          JOIN puntos_entrega pe
@@ -178,6 +179,7 @@ export function createPublicLegacyPedidosRouter({ query, withTransaction }) {
         id: row.id,
         estado: row.estado,
         fecha: row.fecha,
+        ...(menuFeatureEnabled() ? {fecha_entrega_programada:row.fecha_entrega_programada,fecha_entrega_estimada:row.fecha_entrega_estimada} : {}),
         cliente: row.cliente,
         direccion: row.direccion,
         latitud: row.latitud,

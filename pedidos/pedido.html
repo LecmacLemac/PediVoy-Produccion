@@ -378,6 +378,7 @@
       </div>
 
       <h1 id="statusTitle">Buscando pedido...</h1>
+      <p id="menuServiceDate" hidden></p>
       <p class="subtitle" id="statusDesc">Por favor aguarde un momento.</p>
 
       <div class="stepper">
@@ -423,6 +424,7 @@
   </main>
 
   <script src="/pedidos/info-tec/safe-storage.js"></script>
+  <script src="/pedidos/menu-programado.js"></script>
   <script>
     const qs = (name) => new URLSearchParams(window.location.search).get(name);
     const $ = (id) => document.getElementById(id);
@@ -694,6 +696,9 @@
     }
 
     function updateDetails(extraData) {
+      const serviceDate = PediVoyMenu.acceptedDate(extraData);
+      $('menuServiceDate').hidden = !serviceDate;
+      $('menuServiceDate').textContent = serviceDate ? `Entrega programada: ${serviceDate}` : '';
       $('valCliente').textContent = extraData.cliente || '-';
       $('valDireccion').textContent = extraData.direccion || '-';
 

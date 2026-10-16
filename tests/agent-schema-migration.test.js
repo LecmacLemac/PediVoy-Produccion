@@ -16,7 +16,10 @@ test('canonical agent block exactly matches standalone SQL inside the existing f
  const stop=normalized.indexOf(end,start);
  assert.ok(start>=0 && stop>start);
  assert.equal(normalized.slice(start+begin.length,stop).trim(),schema.trim());
- assert.match(normalized.slice(stop+end.length),/^\s*COMMIT;\s*$/);
+ const suffix=normalized.slice(stop+end.length);
+ const nextBlock=suffix.indexOf('-- BEGIN SCHEDULED MENU AVAILABILITY (explicit schema, no backfill)');
+ assert.match(nextBlock<0?suffix:suffix.slice(0,nextBlock),/^\s*COMMIT;\s*$/);
+ if(nextBlock>=0) assert.match(suffix.slice(nextBlock),/^-- BEGIN SCHEDULED MENU AVAILABILITY \(explicit schema, no backfill\)\nBEGIN;/);
  const before=normalized.slice(0,start);
  assert.ok(before.lastIndexOf('BEGIN;')>before.lastIndexOf('COMMIT;'));
  assert.match(before.slice(before.lastIndexOf('BEGIN;')),/SET LOCAL search_path = public;/);

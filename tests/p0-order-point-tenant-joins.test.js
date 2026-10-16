@@ -85,7 +85,8 @@ test('inventario exhaustivo de estrategias: ocho bloques pedido-punto no interpr
 
 test('inventario exhaustivo de transferencias: asociación manual y ambas ramas automáticas cierran pedido-punto', () => {
   const blocks = orderPointBlocks('../src/transferenciasServices.js');
-  assert.equal(blocks.length, 4, `inventario transferencias inesperado: ${blocks.length}`);
+  // Includes the two canonical payment-choice lookup/revalidation joins.
+  assert.equal(blocks.length, 6, `inventario transferencias inesperado: ${blocks.length}`);
   for (const [index, sql] of blocks.entries()) {
     assertDirectPedidoPuntoClosure(sql, `transferencias #${index + 1}`);
     assert.match(sql, /p\.empresa_id\s*=\s*pe\.empresa_id|pe\.empresa_id\s*=\s*p\.empresa_id/i,

@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import { menuFeatureEnabled } from '../menuAvailability.js';
+import { menuIntentHash, validateMenuOrder, menuBusinessFailure, menuError, lockMenuWriteBarrier } from '../services/menuOrderAvailability.js';
 import { z } from 'zod';
 import { armarMensajeConfirmado, calcularFechaEntregaReal, formatARS } from '../utils.js';
 import { boundOrderItemsBlock } from '../whatsappCloud/utilityTemplates.js';
@@ -71,6 +73,8 @@ const createPedidoSchema = z.object({
   notas: z.string().trim().max(1000, 'notas excede el máximo permitido').optional(),
   metodo_pago: z.enum(['efectivo', 'transferencia']).optional(),
   submission_id: z.union([z.string(), z.number()]).optional(),
+  fecha_entrega: z.string().optional(),
+  catalog_channel: z.enum(['catalog', 'landing']).optional(),
   referral_code: z.string().optional(),
   codigo_referente: z.string().optional(),
   codigo_descuento: z.string().optional(),
@@ -86,6 +90,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
   const {
     query,
     pool,
+    nowFn = () => new Date(),
     geocodeIfNeeded,
     normalizePhone,
     pointInAnyZone,
@@ -226,6 +231,9 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         });
       }
 
+      if (menuFeatureEnabled() && Array.isArray(req.body?.items) && req.body.items.some(item => item && (Object.hasOwn(item, 'fecha_entrega') || Object.hasOwn(item, 'fecha_entrega_programada')))) {
+        throw menuError('MENU_ITEM_DATE_FORBIDDEN', 'Debe elegir una sola fecha para todo el pedido', 400);
+      }
       const parse = createPedidoSchema.safeParse(req.body || {});
       if (!parse.success) {
         await rollbackIfNeeded();
@@ -257,7 +265,11 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         referral_code,
         codigo_referente,
         codigo_descuento,
+        fecha_entrega: requestedDeliveryDate,
+        catalog_channel: catalogChannel = 'catalog',
       } = parse.data;
+      const menusEnabled = menuFeatureEnabled();
+      if (!menusEnabled && requestedDeliveryDate !== undefined) throw menuError('MENU_DISABLED','Menús programados deshabilitados');
 
       if (!normalizeGeneralPhoneIdentity(normalizePhone, telefono)) {
         const error = new Error('Teléfono inválido');
@@ -266,8 +278,10 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         throw error;
       }
 
+      if (menusEnabled && !pool) throw menuError('MENU_TRANSACTION_REQUIRED', 'No se pudo confirmar el pedido', 503);
       txClient = pool ? await pool.connect() : null;
       if (txClient) await txClient.query('BEGIN');
+      await lockMenuWriteBarrier(txQuery);
 
       if (typeof resolveEmpresaIdFn !== 'function') {
         const error = new Error('Resolver público de empresa no configurado');
@@ -304,11 +318,13 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         return res.status(400).json({ error: 'items inválidos', reqId });
       }
 
+      const intentItems = normItems.map(item => ({...item}));
+      let intentHash = menusEnabled ? menuIntentHash({deliveryDate: requestedDeliveryDate, channel: catalogChannel, items: intentItems}) : null;
       if (submission_id) {
         // Orden global: submission namespace -> product-name namespaces (sorted) -> rows/resources.
         await txQuery('SELECT pg_advisory_xact_lock(hashtext($1))', [`pedido:${empId}:${submission_id}`]);
         const existingRows = await txQuery(
-          `SELECT id, estado, monto, tracking_token
+          `SELECT id, estado, monto, tracking_token${menusEnabled ? ", menu_intent_hash, to_char(fecha_entrega_programada, 'YYYY-MM-DD') AS fecha_entrega_programada, to_char(fecha_entrega_estimada, 'YYYY-MM-DD') AS fecha_entrega_estimada" : ''}
              FROM pedidos
             WHERE empresa_id = $1 AND submission_id = $2
             LIMIT 1`,
@@ -316,6 +332,15 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         );
         if (existingRows.length) {
           const existing = existingRows[0];
+          if (menusEnabled && requestedDeliveryDate === undefined && existing.fecha_entrega_programada) {
+            intentHash = menuIntentHash({deliveryDate: existing.fecha_entrega_programada, channel: catalogChannel, items: intentItems});
+          }
+          if (menusEnabled && existing.menu_intent_hash && existing.menu_intent_hash !== intentHash) {
+            throw menuError('MENU_INTENT_CONFLICT', 'La clave de confirmación corresponde a otra fecha o composición');
+          }
+          if (menusEnabled && requestedDeliveryDate && !existing.menu_intent_hash) {
+            throw menuError('MENU_INTENT_CONFLICT', 'La clave de confirmación ya corresponde a otro pedido');
+          }
           let trackingToken = existing.tracking_token;
           if (!trackingToken) {
             const candidate = createTrackingToken();
@@ -342,6 +367,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
               submission_id,
               estado: existing.estado,
               monto: existing.monto,
+              ...(menusEnabled ? {fecha_entrega_programada: existing.fecha_entrega_programada, fecha_entrega_estimada: existing.fecha_entrega_estimada} : {}),
               tracking_token: trackingToken,
               tracking_url: buildTrackingPath(trackingToken),
             },
@@ -353,7 +379,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         }
       }
 
-      await ensurePedidoScheduleSchema();
+      if (!menusEnabled) await ensurePedidoScheduleSchema();
 
       await lockGeneralPhoneIdentity(txQuery, { normalizePhoneFn: normalizePhone, telefono });
       let selectedPoint = null;
@@ -410,6 +436,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         normItems[index].precio_unitario = Number(resolved.producto_resuelto.precio);
       }
 
+      const publicProductIds = normItems.map(item => item.producto_id);
       await lockDeliveryPointIdentity(txQuery, {
         empresaId: empId,
         identity: pointIdentity,
@@ -804,8 +831,11 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         }
       }
 
-      const fechaEntregaEstimada = calcularFechaEntregaReal(configEntregaFinal, new Date()).fecha;
-      const fechaEntregaEstimadaSql = toDateOnly(fechaEntregaEstimada);
+      const menuOrder = await validateMenuOrder(txQuery, {empresaId: empId, items: normItems, deliveryDate: requestedDeliveryDate, channel: catalogChannel, now: nowFn, publicProductIds, defaultToToday:true, logistics: configEntregaFinal});
+      const fechaProgramada = menuOrder?.date || null;
+      if (fechaProgramada) intentHash = menuIntentHash({deliveryDate:fechaProgramada,channel:catalogChannel,items:intentItems});
+      const fechaEntregaEstimada = fechaProgramada ? new Date(`${fechaProgramada}T12:00:00`) : calcularFechaEntregaReal(configEntregaFinal, new Date()).fecha;
+      const fechaEntregaEstimadaSql = fechaProgramada || toDateOnly(fechaEntregaEstimada);
 
       const pedRows = await txQuery(
         `INSERT INTO pedidos (
@@ -813,10 +843,10 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           cantidad, cantidad_entregada, monto,
           metodo_pago, aviso_recibido, sats,
           submission_id, chofer_id, zona_id, fecha_entrega_estimada,
-          referido_por_id, tracking_token, notas
-        ) VALUES ($1,$2,NOW(),'pendiente',$3,0,$4,$5,0,0,$6,$7,$8,$9,$10,$11,$12)
+          referido_por_id, tracking_token, notas${menusEnabled ? ', fecha_entrega_programada, menu_intent_hash, menu_channel' : ''}
+        ) VALUES ($1,$2,NOW(),'pendiente',$3,0,$4,$5,0,0,$6,$7,$8,$9,$10,$11,$12${menusEnabled ? ', $13, $14, $15' : ''})
         RETURNING id, estado, monto, tracking_token`,
-        [empId, punto_entrega_id, totalCantidad, totalMonto, metodo_pago, submission_id, chofer_id, zona_id, fechaEntregaEstimadaSql, padrinoId, createTrackingToken(), notas || null]
+        [empId, punto_entrega_id, totalCantidad, totalMonto, metodo_pago, submission_id, chofer_id, zona_id, fechaEntregaEstimadaSql, padrinoId, createTrackingToken(), notas || null, ...(menusEnabled ? [fechaProgramada, intentHash, fechaProgramada ? catalogChannel : null] : [])]
       );
 
       const pedido = pedRows[0];
@@ -1001,6 +1031,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
       postCommitTasks.push(() => ejecutarEstrategiaVecinosFn({ pedidoId: pedido.id, empresaId: empId }));
 
+      if (menuOrder) await validateMenuOrder(txQuery, {empresaId: empId, pedidoId: pedido.id, items: normItems, deliveryDate: fechaProgramada, channel: catalogChannel, now: nowFn, publicProductIds, logistics: configEntregaFinal});
       await commitIfNeeded();
       await runPostCommitTasks();
 
@@ -1015,6 +1046,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           estado: pedido.estado,
           monto: pedido.monto,
           fecha_entrega_estimada: fechaEntregaEstimadaSql,
+          ...(menusEnabled ? {fecha_entrega_programada: fechaProgramada} : {}),
           tracking_token: pedido.tracking_token,
           tracking_url: buildTrackingPath(pedido.tracking_token),
         },
@@ -1026,6 +1058,8 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       });
     } catch (err) {
       await rollbackIfNeeded();
+      const menuFailure = menuBusinessFailure(err);
+      if (menuFailure) return res.status(menuFailure.status).json({error: menuFailure.error, code: menuFailure.code, reqId});
       if (err?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
         tEnd(`[public/pedidos] ${reqId} TOTAL`);
         return res.status(503).json({

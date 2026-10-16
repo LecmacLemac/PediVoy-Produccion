@@ -1,4 +1,5 @@
 import { registerRoutes } from './index.js';
+import { createMenuRouter, createPublicMenuRouter } from './menu.js';
 import { mountPersonalAgentModules } from './mountPersonalAgents.js';
 import { createAuthGuestSignupRouter } from './authGuestSignup.js';
 import { createSetupRouter } from './setup.js';
@@ -169,6 +170,8 @@ export function mountApiModules(app, deps) {
     })
   );
 
+  app.use('/api/menu', createMenuRouter({query, withTransaction, withAuth, checkLicencia: deps.checkLicencia}));
+  app.use('/api/public', createPublicMenuRouter({query}));
   app.use('/api/entrega', createEntregaConfigRouter({ query, withAuth, resolveEmpresaId }));
   app.use('/api/ai', createAiSiteBuilderRouter({ query, withAuth, isSuper, getEmpresaIdFromToken, projectDir: deps.projectDir }));
   app.use('/api/zonas', createZonasRouter({ query, withTransaction, withAuth, isSuper, getEmpresaIdFromToken }));

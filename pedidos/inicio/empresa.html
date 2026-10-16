@@ -682,6 +682,8 @@
 <form id="formEmpresa" class="modal-body">
         <input type="hidden" id="e_id">
 
+        <section id="menu-company"></section>
+
         <div class="section-label">Datos Generales</div>
 
         <div>
@@ -1435,6 +1437,7 @@
 
   <div id="toast" class="toast"></div>
 
+  <script src="menu-admin.js"></script>
   <script>
     const $ = (s) => document.querySelector(s);
     const LOGIN_URL = '/pedidos/login.html';
@@ -1661,6 +1664,7 @@ if (logoutLink) {
     let currentEmpresaIdCuentas = null;
     let esSuperAdmin = false;
     let currentUserEmpresaId = null;
+    const menuCompany = MenuAdmin.createCompany(document.getElementById("menu-company"), () => document.getElementById("e_id").value);
     let saveBusy = false;
     let deleteBusy = false;
     let cuentasBancariasDraft = [];
@@ -2314,6 +2318,7 @@ if (logoutLink) {
       $('#modalTitle').textContent = 'Nueva Empresa';
       $('#formEmpresa').reset();
       $('#e_id').value = '';
+      menuCompany.open(null);
       $('#e_landing_file').value = ''; // Reset file input
       $('#e_logo_file').value = '';
       $('#e_logo_url').value = '';
@@ -2333,6 +2338,7 @@ if (logoutLink) {
     }
 
     function closeModal() {
+      menuCompany.close();
       $('#modal').classList.remove('open');
     }
 
@@ -2352,6 +2358,7 @@ if (logoutLink) {
 
       // 1. Datos básicos
       $('#e_id').value = c.id;
+      menuCompany.open(c.id);
       syncSuperAdminUi();
       $('#e_nombre').value = c.nombre || '';
       $('#e_logo_url').value = c.logo_url || '';

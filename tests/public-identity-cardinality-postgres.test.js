@@ -63,6 +63,10 @@ async function fixture(pool) {
       telefono text,
       mensaje text,
       transport_origin text,
+      reply_correlation_id text,
+      notification_correlation_id text,
+      cloud_template_key text,
+      cloud_template_parameters jsonb,
       status text,
       created_at timestamptz DEFAULT now()
     );

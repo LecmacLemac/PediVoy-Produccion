@@ -7,6 +7,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { resolvePublicPedidoEmpresaId } from '../services/publicPedidoTenant.js';
 import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
+import { injectLandingMenuAdapter } from '../services/landingMenuAdapter.js';
 
 // Helper: nombre y path del archivo HTML asociado a una empresa
 function getEmpresaLandingFilename(empresaId) {
@@ -70,6 +71,12 @@ export function registerLandingRoutes(app, deps) {
     return path.join(PAGES_DIR, getEmpresaLandingFilename(empresaId));
   }
 
+  async function sendCompanyLanding(res, file, empresaId) {
+    if (process.env.SCHEDULED_MENUS_ENABLED !== '1') return res.sendFile(file);
+    const html = await fs.promises.readFile(file, 'utf8');
+    return res.set('Cache-Control', 'no-store').type('html').send(injectLandingMenuAdapter(html, empresaId));
+  }
+
   const DEFAULT_INDEX = resolveDefaultIndex(projectDir);
 
   // Uploader para LANDINGS HTML
@@ -114,7 +121,10 @@ export function registerLandingRoutes(app, deps) {
       }
 
       const customPage = await resolvePagePath(req);
-      if (customPage) return res.sendFile(customPage);
+      if (customPage) {
+        const empresaId = Number(path.basename(customPage).match(/^empresa_(\d+)\.html$/)?.[1]);
+        return await sendCompanyLanding(res, customPage, empresaId);
+      }
       if (req.query?.slug !== undefined || req.query?.empresa_id !== undefined) return res.sendStatus(404);
       if (DEFAULT_INDEX) return res.sendFile(DEFAULT_INDEX);
       return res.redirect('/pedidos/login.html');
@@ -159,7 +169,7 @@ export function registerLandingRoutes(app, deps) {
       const empresaId = await resolvePublicPedidoEmpresaId({ method: 'GET', query: { slug } }, query);
       const file = getEmpresaLandingPath(empresaId);
       if (!fs.existsSync(file)) return res.sendStatus(404);
-      return res.sendFile(file);
+      return await sendCompanyLanding(res, file, empresaId);
     } catch (error) { return res.sendStatus(error?.statusCode && error.statusCode < 500 ? 404 : 500); }
   });
   app.use(['/landing', '/l'], (_req, res) => res.sendStatus(404));

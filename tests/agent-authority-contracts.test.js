@@ -31,12 +31,14 @@ test('authority TAP rejects counters alone, skipped tests and wrong named cases'
 test('three exact personal mutations have endpoint-bound executable authority, without changing 191 legacy rows', () => {
   const graph = discoverProductionGraph({ root, entries: ['src/app.js'] });
   const inventory = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/production-mutation-inventory.json')));
-  assert.equal(graph.mutations.length, 194);
-  assert.equal(inventory.length, 194);
+  assert.equal(graph.mutations.length, inventory.length);
+  const menuMutations = inventory.filter(row => row.source === 'src/routes/menu.js');
+  assert.deepEqual(menuMutations.map(key), ['src/routes/menu.js|PUT|/config']);
+  assert.equal(menuMutations[0].classification, 'admin_exacto');
   assert.deepEqual(graph.mutations.filter(row => expected.has(key(row))).map(key).sort(), [...expected.keys()].sort());
   const personal = inventory.filter(row => expected.has(key(row)));
   assert.equal(personal.length, 3);
-  assert.equal(inventory.filter(row => !expected.has(key(row))).length, 191);
+  assert.equal(inventory.filter(row => !expected.has(key(row)) && row.source !== 'src/routes/menu.js').length, 191);
   for (const row of personal) {
     assert.equal(row.classification, expected.get(key(row)));
     for (const metadata of [undefined, {...row.authorityEvidence, export:'publicAuthorityContract'}, {...row.authorityEvidence, module:'unregistered.js'}]) {

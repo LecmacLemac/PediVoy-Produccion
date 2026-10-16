@@ -2,6 +2,7 @@
 // API Repartidor (dashboard chofer) — extraído desde server.js
 
 import express from 'express';
+import { lockMenuWriteBarrier } from '../services/menuOrderAvailability.js';
 import { awardPointsForDeliveredOrder as awardPointsForDeliveredOrderDefault } from '../services/puntosService.js';
 import { generateComisionesForDeliveredOrder as generateComisionesForDeliveredOrderDefault } from '../services/referentesService.js';
 import {
@@ -1219,6 +1220,7 @@ export function createRepartidorApiRouter(deps) {
      // -----------------------------------------------------
      await client.query('BEGIN');
      transactionPhase = 'work';
+     await lockMenuWriteBarrier(client.query.bind(client));
 
      // 2. Lock del Pedido (Evita doble entrega concurrente)
      const pedQ = await client.query(

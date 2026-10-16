@@ -1,4 +1,5 @@
 // src/handlers.js — ESM + PostgreSQL
+import { rejectUndatedScheduledItems } from './services/menuOrderAvailability.js';
 
 import https from 'node:https';
 import { query, withTransaction } from './db.js';
@@ -1854,6 +1855,7 @@ async function handleReposicionAutomatica(
         items,
         includePrice: true,
       });
+      await rejectUndatedScheduledItems(txQuery, {empresaId: puntoEmpresaId, items: resolvedItems});
       let totalMonto = 0;
       let totalCant = 0;
       const resumenItems = [];
@@ -1946,6 +1948,10 @@ async function handleReposicionAutomatica(
     await client.sendMessage(numero, msg);
 
   } catch (e) {
+    if (e?.code === 'MENU_DATE_REQUIRED') {
+      await client.sendMessage(numero, 'Este pedido requiere elegir una fecha. Confirmalo desde el catálogo.');
+      return;
+    }
     if (isConservativeEnqueueError(e)) throw e;
     if (logProcessingErrors) console.error('Error Reposición Automática:', e);
     await client.sendMessage(numero, 'Tuve un problema procesando la reposición. Por favor escribime con un humano.');

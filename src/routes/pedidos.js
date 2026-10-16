@@ -1,5 +1,7 @@
 // src/routes/pedidos.js
 import express from 'express';
+import { menuFeatureEnabled } from '../menuAvailability.js';
+import { validatePersistedMenuOrder, menuBusinessFailure, menuError } from '../services/menuOrderAvailability.js';
 
 import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken } from '../services.js';
 import { query, withTransaction } from '../db.js';
@@ -58,6 +60,9 @@ export function createUpdatePedidoHandler({
       const actorUid = requireCanonicalActorUid(req.user);
 
       const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+      if (menuFeatureEnabled() && ['fecha_entrega','fecha_entrega_programada','fecha_entrega_estimada'].some(key => hasOwn(body,key))) {
+        throw menuError('MENU_DATE_IMMUTABLE', 'La fecha comprometida no admite cambios', 409);
+      }
       const choferInput = requireOptionalPositiveJsonInteger(body, 'chofer_id');
       const zonaInput = requireOptionalPositiveJsonInteger(body, 'zona_id');
       const outcome = await withTransactionFn(async (txQuery) => {
@@ -191,6 +196,7 @@ export function createUpdatePedidoHandler({
           updated = updatedRows[0];
         }
 
+        if (reopeningCancelled) await validatePersistedMenuOrder(txQuery, {pedidoId,empresaId:current.empresa_id});
         return {
           row: updated,
           estadoChanged: (!finalized || reopeningCancelled) && estadoPresent && estado !== null && estado !== current.estado,
@@ -239,6 +245,8 @@ export function createUpdatePedidoHandler({
 
       return res.json({ ok: true });
     } catch (e) {
+      const menuFailure = menuBusinessFailure(e);
+      if (menuFailure) return res.status(menuFailure.status).json({error:menuFailure.error,code:menuFailure.code});
       if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
         return res.status(503).json({
           error: 'Resultado de actualización de pedido indeterminado',
@@ -889,6 +897,8 @@ export function createPedidosRouter({ withAuthFn = withAuth, mapsBrowserEnv = pr
       res.json({ ok: true });
 
     } catch (e) {
+      const menuFailure = menuBusinessFailure(e);
+      if (menuFailure) return res.status(menuFailure.status).json({error:menuFailure.error,code:menuFailure.code});
       console.error('ERROR DELETE PEDIDO:', e);
       res.status(500).json({ error: 'Error interno al eliminar el pedido' });
     }

@@ -1,5 +1,6 @@
 // src/routes/pedidosItems.js
 import express from 'express';
+import { menuBusinessFailure } from '../services/menuOrderAvailability.js';
 import {
   withAuth as withAuthDefault,
   isSuper as isSuperDefault,
@@ -65,6 +66,8 @@ export function createUpdatePedidoItemsHandler({ withTransaction = withTransacti
       });
       return res.json({ ok: true });
     } catch (e) {
+      const menuFailure = menuBusinessFailure(e);
+      if (menuFailure) return res.status(menuFailure.status).json({error:menuFailure.error,code:menuFailure.code});
       if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
         return res.status(503).json({
           error: 'Resultado de actualización de ítems indeterminado',

@@ -1,6 +1,7 @@
 // src/db.js — PostgreSQL (ESM)
 import 'dotenv/config';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { menuFeatureEnabled } from './menuAvailability.js';
 import pkg from 'pg';
 const { Pool } = pkg;
 
@@ -96,6 +97,10 @@ export async function withTransaction(work, {
     try {
       await client.query('BEGIN');
       phase = 'WORK';
+      // All canonical callbacks (including old order/payment/delivery writers)
+      // enter the SQL barrier before taking business row/namespace locks.
+      // The disabled path must not depend on the optional menu schema.
+      if (menuFeatureEnabled()) await client.query('SELECT id FROM public.menu_write_barrier WHERE id=1 FOR UPDATE');
       const result = await work(txQuery, client);
       phase = 'COMMIT';
       await client.query('COMMIT');

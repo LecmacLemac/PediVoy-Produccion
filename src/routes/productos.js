@@ -2,6 +2,8 @@
 // Productos (CRUD) extraído desde server.js
 
 import express from 'express';
+import { menuFeatureEnabled, normalizeProductAvailabilityConfig } from '../menuAvailability.js';
+import { menuBusinessFailure, lockMenuWriteBarrier } from '../services/menuOrderAvailability.js';
 import {
   lockProductIdentityNamespaces,
   normalizeProductIdentityName,
@@ -42,7 +44,7 @@ export function createProductosRouter(deps) {
           retornable, stock_infinito,
           categoria, orden,
           etiqueta, imagen_promo, mostrar_en_catalogo, mostrar_en_landing,
-          config_activo, promo_config,
+          config_activo, promo_config,${menuFeatureEnabled() ? ' disponibilidad_config,' : ''}
           created_at, updated_at, deleted_at
         FROM productos
         WHERE empresa_id = $1 ${whereDeleted}
@@ -53,6 +55,8 @@ export function createProductosRouter(deps) {
 
       return res.json(rows);
     } catch (e) {
+      const menuFailure = menuBusinessFailure(e);
+      if (menuFailure) return res.status(menuFailure.status).json({error:menuFailure.error,code:menuFailure.code});
       console.error('PRODUCTOS ERROR:', e);
       return res.status(500).json({ error: 'Error listando productos' });
     }
@@ -104,12 +108,15 @@ export function createProductosRouter(deps) {
       const externalNorm = external_id === undefined || external_id === null ? null : String(external_id).trim();
       const externalFinal = externalNorm && externalNorm.length ? externalNorm : null;
 
+      const availability = menuFeatureEnabled() && Object.hasOwn(req.body || {}, 'disponibilidad_config')
+        ? normalizeProductAvailabilityConfig(req.body.disponibilidad_config) : null;
       const configActivo = config_activo === undefined ? null : config_activo;
       const promoConfig = promo_config === undefined ? null : promo_config;
 
       const uid = req.user?.uid ?? null;
 
       const rows = await withTransaction(async txQuery => {
+        await lockMenuWriteBarrier(txQuery);
         await lockProductIdentityNamespaces(txQuery, { empresaId: targetEmpresa, names: [nombreOk] });
         return txQuery(
           `
@@ -122,7 +129,7 @@ export function createProductosRouter(deps) {
           categoria, orden,
           etiqueta, imagen_promo, mostrar_en_catalogo, mostrar_en_landing,
           config_activo, promo_config,
-          created_by, updated_by, updated_at
+          created_by, updated_by, updated_at${availability ? ', disponibilidad_config' : ''}
         )
         VALUES (
           $1,
@@ -133,7 +140,7 @@ export function createProductosRouter(deps) {
           $13, $14,
           $15, $16, $17, $18,
           $19, $20,
-          $21, $22, NOW()
+          $21, $22, NOW()${availability ? ', $23::jsonb' : ''}
         )
         RETURNING id
         `,
@@ -160,12 +167,15 @@ export function createProductosRouter(deps) {
             promoConfig,
             uid,
             uid,
+            ...(availability ? [JSON.stringify(availability)] : []),
           ]
         );
       });
 
       return res.json({ id: rows[0].id });
     } catch (e) {
+      const menuFailure = menuBusinessFailure(e);
+      if (menuFailure) return res.status(menuFailure.status).json({error:menuFailure.error,code:menuFailure.code});
       if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
         return res.status(503).json({
           error: 'Resultado de creación de producto indeterminado',
@@ -313,6 +323,11 @@ export function createProductosRouter(deps) {
         vals.push(extNorm && extNorm.length ? extNorm : null);
       }
 
+      if (menuFeatureEnabled() && Object.hasOwn(req.body || {}, 'disponibilidad_config')) {
+        const availability = normalizeProductAvailabilityConfig(req.body.disponibilidad_config);
+        sets.push(`disponibilidad_config=$${idx++}::jsonb`);
+        vals.push(JSON.stringify(availability));
+      }
       if (!sets.length) return res.json({ ok: true });
 
       const uid = req.user?.uid ?? null;
@@ -321,6 +336,7 @@ export function createProductosRouter(deps) {
       vals.push(uid);
 
       await withTransaction(async txQuery => {
+        await lockMenuWriteBarrier(txQuery);
         // Orden global para identidad de producto: namespace(s) -> fila de producto.
         // La prelectura sólo construye el set; la fila se relee y valida tras los locks.
         const observed = await txQuery(
@@ -378,6 +394,8 @@ export function createProductosRouter(deps) {
       });
       return res.json({ ok: true });
     } catch (e) {
+      const menuFailure = menuBusinessFailure(e);
+      if (menuFailure) return res.status(menuFailure.status).json({error:menuFailure.error,code:menuFailure.code});
       if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
         return res.status(503).json({
           error: 'Resultado de actualización de producto indeterminado',
@@ -467,6 +485,8 @@ export function createProductosRouter(deps) {
         discount_redemptions: Number(discountRow?.c || 0),
       });
     } catch (e) {
+      const menuFailure = menuBusinessFailure(e);
+      if (menuFailure) return res.status(menuFailure.status).json({error:menuFailure.error,code:menuFailure.code});
       console.error(e);
       return res.status(500).json({ error: 'Error obteniendo métricas de promo' });
     }
@@ -485,6 +505,7 @@ export function createProductosRouter(deps) {
       const hard = esSuperAdmin && String(req.query?.hard || '') === '1';
       const uid = req.user?.uid ?? null;
       await withTransaction(async txQuery => {
+        await lockMenuWriteBarrier(txQuery);
         const observed = await txQuery(
           `SELECT id, empresa_id, nombre
              FROM productos
@@ -543,6 +564,8 @@ export function createProductosRouter(deps) {
       });
       return res.json(hard ? { ok: true, hard: true } : { ok: true });
     } catch (e) {
+      const menuFailure = menuBusinessFailure(e);
+      if (menuFailure) return res.status(menuFailure.status).json({error:menuFailure.error,code:menuFailure.code});
       if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
         return res.status(503).json({
           error: 'Resultado de eliminación de producto indeterminado',

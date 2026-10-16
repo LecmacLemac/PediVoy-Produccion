@@ -1,4 +1,5 @@
 import { validateMetaWamid } from './messageId.js';
+import { lockMenuWriteBarrier } from '../services/menuOrderAvailability.js';
 import { parseProactiveNotificationCorrelationId } from '../wpp/proactiveCorrelation.js';
 import { createNotificarPedidoTransferencia } from '../services/notificacionesPedidos.js';
 import { enqueueTransferPaymentWppMessageInTransaction } from '../services/messaging.js';
@@ -96,6 +97,7 @@ export function createWhatsAppPaymentChoiceProcessor({
     try {
       await client.query('BEGIN');
       transactionOpen = true;
+      await lockMenuWriteBarrier(client.query.bind(client));
 
       const outboundRows = await rows(client, `
         SELECT id, notification_correlation_id, cloud_template_key, transport_origin

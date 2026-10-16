@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { rejectUndatedScheduledItems, menuBusinessFailure } from '../services/menuOrderAvailability.js';
 import express from 'express';
 import QRCode from 'qrcode';
 import { enqueueWppOutboxInTransaction } from '../wpp/enqueue.js';
@@ -995,6 +996,7 @@ export function createJuegosPublicosRouter(deps) {
           [participation.producto_id, empresaId]
         );
         if (!product) return { status: 409, payload: { error: 'Producto premio no disponible.' } };
+        await rejectUndatedScheduledItems(q, {empresaId, items: [{producto_id: product.id, cantidad: 1}]});
 
         const pointIdentity = deliveryPointIdentity({
           normalizePhoneFn: normalizePhone,
@@ -1103,6 +1105,8 @@ export function createJuegosPublicosRouter(deps) {
 
       return res.status(result.status).json(result.payload);
     } catch (e) {
+      const menuFailure = menuBusinessFailure(e);
+      if (menuFailure) return createJsonError(res, menuFailure.status, menuFailure.error, {code:menuFailure.code});
       if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
         return createJsonError(res, 503, 'Resultado de creación de premio indeterminado.', {
           code: 'TRANSACTION_OUTCOME_UNKNOWN',

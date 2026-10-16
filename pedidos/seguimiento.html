@@ -311,6 +311,7 @@
         <div>
           <h1 class="text-lg font-bold text-gray-900" id="lblCliente">Cargando...</h1>
           <div class="order-id" id="orderMeta">Seguimiento en tiempo real</div>
+          <p id="menuServiceDate" hidden></p>
           <p class="status-detail" id="lblEstadoDetalle">Buscando el estado del pedido...</p>
         </div>
       </div>
@@ -346,6 +347,7 @@
     </div>
   </div>
 
+  <script src="/pedidos/menu-programado.js"></script>
   <script src="/pedidos/seguimiento-google-map.js"></script>
   <style> @keyframes spin { 100% { transform: rotate(360deg); } } 
 
@@ -917,6 +919,9 @@
     lblCliente.textContent   = `Hola ${nombreCliente}`;
     // pedido.id oculto en UI pública
     lblDireccion.textContent = pedido.direccion || '';
+    const serviceDate = PediVoyMenu.acceptedDate(pedido);
+    document.getElementById('menuServiceDate').hidden = !serviceDate;
+    document.getElementById('menuServiceDate').textContent = serviceDate ? `Entrega programada: ${serviceDate}` : '';
     renderTopBrand(pedido);
 
     if (pedido.empresa_logo_url) {

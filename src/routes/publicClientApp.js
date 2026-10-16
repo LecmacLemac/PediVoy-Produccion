@@ -1,4 +1,5 @@
 import express from 'express';
+import { menuFeatureEnabled } from '../menuAvailability.js';
 import jwt from 'jsonwebtoken';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { enqueueWppOutbox } from '../wpp/enqueue.js';
@@ -782,6 +783,7 @@ export function createPublicClientAppRouter({
 
       const orders = await query(
         `SELECT p.id, p.fecha, p.estado, p.metodo_pago, p.monto, p.tracking_token,
+                ${menuFeatureEnabled() ? "to_char(p.fecha_entrega_programada, 'YYYY-MM-DD') AS fecha_entrega_programada, to_char(p.fecha_entrega_estimada, 'YYYY-MM-DD') AS fecha_entrega_estimada," : ''}
                 pe.cliente, pe.direccion
          FROM pedidos p
          JOIN puntos_entrega pe

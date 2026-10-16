@@ -110,10 +110,17 @@ test('PostgreSQL psql interrupted role migration preserves rows and original con
     const before = (await pool.query('SELECT * FROM usuarios')).rows;
     const directory = mkdtempSync(join(process.cwd(), '.security-pg-interrupt-'));
     try {
-      const boundaries = [...migration.matchAll(/;/g)].map(match => match.index + 1);
-      for (const end of boundaries.filter(end => !/COMMIT;\s*(?:--[^\n]*\n?)*\s*$/i.test(migration.slice(0, end)))) {
+      // The extracted block also closes the preceding transaction and opens the
+      // next one. Only prefixes inside the role transaction model interruption;
+      // a prefix after its COMMIT has already (correctly) changed these rows.
+      const roleStart = migration.indexOf('BEGIN;');
+      const roleCommit = migration.indexOf('COMMIT;', roleStart);
+      assert.ok(roleStart >= 0 && roleCommit > roleStart);
+      const interruptedRole = migration.slice(roleStart, roleCommit);
+      const boundaries = [...interruptedRole.matchAll(/;/g)].map(match => match.index + 1);
+      for (const end of boundaries) {
         const file = join(directory, 'partial.sql');
-        writeFileSync(file, migration.slice(0, end));
+        writeFileSync(file, interruptedRole.slice(0, end));
         execFileSync(join(bin, 'psql'), ['-X', '-h', '127.0.0.1', '-p', String(pool.options.port), '-U', 'security_test', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-f', file], { stdio: 'pipe' });
         assert.deepEqual((await pool.query('SELECT * FROM usuarios')).rows, before);
         const constraints = await pool.query("SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid='usuarios'::regclass AND conname='usuarios_role_check'");

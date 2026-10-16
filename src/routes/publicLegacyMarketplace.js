@@ -1,4 +1,5 @@
 import express from 'express';
+import { filterMenuCatalog } from '../services/menuOrderAvailability.js';
 
 export function createPublicLegacyMarketplaceRouter({ query }) {
   if (typeof query !== 'function') throw new Error('createPublicLegacyMarketplaceRouter: falta query(fn)');
@@ -6,6 +7,7 @@ export function createPublicLegacyMarketplaceRouter({ query }) {
   const router = express.Router();
 
   router.get('/marketplace', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
     try {
       const lat = parseFloat(req.query.lat);
       const lng = parseFloat(req.query.lng);
@@ -45,7 +47,8 @@ export function createPublicLegacyMarketplaceRouter({ query }) {
           [emp.id]
         );
 
-        if (productos.length > 0) resultados.push({ ...emp, productos });
+        const disponibles = await filterMenuCatalog(query, {empresaId: Number(emp.id), products: productos, channel: 'catalog', deliveryDate: req.query.fecha_entrega});
+        if (disponibles.length > 0) resultados.push({ ...emp, productos: disponibles });
       }
 
       return res.json(resultados);

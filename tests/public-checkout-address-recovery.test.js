@@ -104,6 +104,7 @@ test('envío pendiente y éxito bloquean desktop, mobile y un segundo pedido ant
       await page.click('button[data-action="add-to-cart"]');
       await page.type('[name="telefono"]', '3531234567');
       await page.waitForSelector('#addressHistoryCard:not([hidden])');
+      await page.waitForFunction(() => !document.querySelector('#form button[type="submit"]').disabled);
       await page.$eval('#form', form => form.requestSubmit());
       await page.waitForFunction(() => document.querySelector('#form button[type="submit"]').textContent.includes('Enviando'));
       await new Promise(resolve => setTimeout(resolve, 50));
@@ -172,6 +173,7 @@ test('checkout habilita confirmar con carrito y entrega válidos, muestra total 
 
       await page.type('[name="telefono"]', '3531234567');
       await page.waitForSelector('#addressHistoryCard:not([hidden])');
+      await page.waitForFunction(() => !document.querySelector('#form button[type="submit"]').disabled);
       assert.equal(await page.$eval('#form button[type="submit"]', el => el.disabled), false);
       assert.equal(await page.$eval('#mobSubmit', el => el.disabled), false);
       assert.match(await page.$eval('#form button[type="submit"]', el => el.textContent), /\$\s*100/);

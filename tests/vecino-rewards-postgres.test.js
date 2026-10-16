@@ -22,6 +22,7 @@ async function createFixture(pool) {
       id integer PRIMARY KEY,
       empresa_id integer NOT NULL,
       nombre text NOT NULL,
+      precio numeric NOT NULL DEFAULT 1000,
       activo boolean DEFAULT true,
       deleted_at timestamptz,
       promo_config jsonb,
@@ -61,7 +62,8 @@ async function createFixture(pool) {
       zona_id integer,
       fecha_entrega_estimada date,
       referido_por_id integer,
-      tracking_token text
+      tracking_token text,
+      notas text
     );
     CREATE TABLE items_pedido (
       id serial PRIMARY KEY,
@@ -371,12 +373,16 @@ test('mismatch exact-row al reclamar revierte pedido, items y recompensa', postg
     await createFixture(pool);
     await seedValidReferral(pool);
     await pool.query('INSERT INTO cliente_recompensas (cliente_id, producto_id, cantidad, reclamado, fecha_ganado) VALUES (10, 55, 1, false, now())');
+    let claimAttempts = 0;
     const controlledPool = {
       async connect() {
         const client = await pool.connect();
         return {
           async query(sql, params) {
-            if (String(sql).includes('UPDATE cliente_recompensas')) return { rows: [] };
+            if (String(sql).includes('UPDATE cliente_recompensas')) {
+              claimAttempts += 1;
+              return { rows: [] };
+            }
             return client.query(sql, params);
           },
           release(error) { client.release(error); },
@@ -388,6 +394,7 @@ test('mismatch exact-row al reclamar revierte pedido, items y recompensa', postg
       const result = await postPedido(baseUrl, 3, 'reward-mismatch');
       assert.equal(result.status, 500);
     });
+    assert.equal(claimAttempts, 1, 'the injected exact-row mismatch must be reached');
     assert.equal((await pool.query("SELECT COUNT(*)::int AS c FROM pedidos WHERE submission_id = 'reward-mismatch'")).rows[0].c, 0);
     assert.equal((await pool.query("SELECT COUNT(*)::int AS c FROM items_pedido ip JOIN pedidos p ON p.id=ip.pedido_id WHERE p.submission_id='reward-mismatch'")).rows[0].c, 0);
     assert.equal((await pool.query('SELECT reclamado FROM cliente_recompensas')).rows[0].reclamado, false);
