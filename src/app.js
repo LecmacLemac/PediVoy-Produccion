@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import { registerLandingRoutes } from './routes/landingRoutes.js';
+import { registerCompanyManual } from './routes/companyManual.js';
 import { mountApiModules } from './routes/mountApiModules.js';
 import { personalAgentHttpBoundary } from './agents/httpBoundary.js';
 import { createPublicLegacyPedidosRouter } from './routes/publicLegacyPedidos.js';
@@ -324,6 +325,7 @@ export function createApp(deps) {
   // CARPETAS ESTÁTICAS DEL SISTEMA (Carrito, etc.)
   // ==================================================
   const PEDIDOS_DIR = path.join(projectDir, 'pedidos');
+  registerCompanyManual(app, { withAuth });
   if (fs.existsSync(PEDIDOS_DIR)) {
     const JUEGOS_INDEX = path.join(PEDIDOS_DIR, 'juegos', 'index.html');
     app.get('/pedidos/juegos/:publicCode', (req, res, next) => {

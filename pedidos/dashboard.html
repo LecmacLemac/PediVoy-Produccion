@@ -652,6 +652,7 @@
         <li><a href="repartidores.html">Repartidor</a></li>
         <li><a href="estadisticas.html">Estadisticas</a></li>
         <li id="whatsappCloudNavItem" hidden><a href="whatsapp-cloud.html">WhatsApp Cloud</a></li>
+        <li id="companyManualNavItem" hidden><a href="/pedidos/ayuda">Ayuda y manual</a></li>
         <li><a href="qr.html">QR</a></li>
         <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
       </ul>
@@ -1035,6 +1036,7 @@
     import { hasValidCoordinates } from './location-utils.js';
     import { loadDashboardGoogleMaps } from './dashboard-google-map.js';
     import { applyCloudInboxNavigation } from './dashboard-nav.js';
+    import { applyCompanyManualNavigation } from './dashboard-nav.js';
     import { applyFinalizedOrderControls, buildPedidoSavePlan, createPedidoEditCoordinator, isPedidoFinalizado, resetPedidoEditView } from './dashboard-order-edit.js';
 
     // ====== Auth (modo seguro: cookie httpOnly) ======
@@ -1848,6 +1850,7 @@
       const user = j?.user || null;
       currentUser = user;
       applyCloudInboxNavigation(document, user?.role);
+      applyCompanyManualNavigation(document, user?.role);
 
       const role = String(user?.role || '').toLowerCase();
       isSuper = role === 'super';
