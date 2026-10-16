@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Realizar Pedido</title>
   <link rel="stylesheet" href="theme-base.css" />
   <meta name="color-scheme" content="light only">
@@ -355,14 +355,44 @@
       padding: 0.75rem 1rem !important;
       font-size: 0.95rem !important;
       background: #f8fafc !important;
+      color: #1e293b !important;
+      -webkit-text-fill-color: #1e293b !important;
+      color-scheme: light;
       box-shadow: none !important;
       transition: all 0.2s !important;
+    }
+    form input::placeholder, form textarea::placeholder {
+      color: #64748b !important;
+      -webkit-text-fill-color: #64748b !important;
+      opacity: 1;
     }
     
     form input:focus, form textarea:focus {
       background: white !important;
       border-color: var(--brand) !important;
       box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1) !important;
+    }
+
+    #form input[name="telefono"] { transition: none !important; }
+    #form input.phone-client-recognized:not([aria-invalid="true"]) {
+      border-color: #15803d !important;
+    }
+    #form input.phone-needs-attention {
+      background: #fffbf2 !important;
+      border-color: #b58945 !important;
+    }
+    @keyframes phone-attention {
+      50% { outline-color: rgba(181, 137, 69, 0.5); }
+    }
+    #form input.phone-attention-pulse {
+      outline: 3px solid transparent;
+      outline-offset: 2px;
+      animation: phone-attention 1.4s ease-in-out 2;
+    }
+    #phoneFormatStatus {
+      color: #15803d;
+      font-size: 0.85rem;
+      font-weight: 600;
     }
 
     form label {
@@ -380,6 +410,7 @@
       border-radius: 12px;
       font-weight: 700;
       font-size: 1rem;
+      line-height: 1.25;
       letter-spacing: 0.02em;
       box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.4);
       transition: transform 0.2s, box-shadow 0.2s;
@@ -397,6 +428,40 @@
       box-shadow: none;
     }
 
+
+    @keyframes checkout-ready {
+      50% { outline-color: rgba(37, 99, 235, 0.45); }
+    }
+    #form button.checkout-ready-pulse, #mobSubmit.checkout-ready-pulse {
+      outline: 3px solid transparent;
+      outline-offset: 3px;
+      animation: checkout-ready 1.4s ease-in-out 2;
+    }
+    #form button.checkout-pending, #mobSubmit.checkout-pending,
+    #form button.checkout-confirmed, #mobSubmit.checkout-confirmed {
+      background: #1e293b;
+      color: #fff;
+      opacity: 1;
+      transform: none;
+      box-shadow: none;
+    }
+    #form button.checkout-confirmed, #mobSubmit.checkout-confirmed { background: #15803d; }
+    .checkout-spinner {
+      display: inline-block;
+      width: 0.85em;
+      height: 0.85em;
+      margin-right: 0.5em;
+      border: 2px solid rgba(255,255,255,0.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      vertical-align: -0.1em;
+      animation: checkout-spin 1.4s linear 2;
+    }
+    @keyframes checkout-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      #form input.phone-attention-pulse, #form button.checkout-ready-pulse,
+      #mobSubmit.checkout-ready-pulse, .checkout-spinner { animation: none !important; }
+    }
 
     .checkout-step {
       margin: 0.25rem 0 0.5rem;
@@ -469,6 +534,10 @@
     }
 
     .mobile-bar button {
+      flex: 1;
+      min-width: 0;
+      min-height: 3.5rem;
+      line-height: 1.2;
       background: white;
       color: var(--ink);
       border: none;
@@ -613,7 +682,7 @@
           🛍️ Tu Carrito
         </h4>
         
-        <div id="cart" class="cart-box">
+        <div id="cart" class="cart-box" tabindex="-1" role="region" aria-label="Tu carrito">
           <div style="text-align:center; color:var(--muted); padding:2rem 1rem; background:#f8fafc; border-radius:12px; border:1px dashed var(--border);">
             <div style="font-size:2rem; margin-bottom:0.5rem">🛒</div>
             Tu carrito está vacío.<br>¡Elegí tus productos!
@@ -621,7 +690,7 @@
         </div>
 
         <div class="total-row">
-          <span class="total-label">Total a Pagar</span>
+          <span class="total-label">Total estimado</span>
           <span id="total" class="total-amount">$0</span>
         </div>
 
@@ -642,7 +711,8 @@
           <label>
             Celular (WhatsApp)
             <input name="telefono" type="tel" inputmode="tel" autocomplete="tel" required minlength="10" maxlength="24"
-                   aria-describedby="phoneLookupStatus" placeholder="Ej: 3534112233">
+                   aria-describedby="phoneLookupStatus phoneFormatStatus" placeholder="Ej: 3534112233">
+            <span id="phoneFormatStatus" role="status" aria-live="polite" hidden></span>
           </label>
           <p id="phoneLookupStatus" class="lookup-status" role="status" aria-live="polite">Ingresá los 10 dígitos para continuar.</p>
 
@@ -762,6 +832,7 @@
     let defaultCountry = '';
     let orderSubmissionPending = false;
     let orderSubmissionSucceeded = false;
+    let checkoutWasReady = false;
     let gpsRequestSequence = 0;
 
     function setOrderingEnabled(enabled) {
@@ -1024,7 +1095,7 @@
         request: async (url, options) => { const r = await fetch(url, options); if (!r.ok) { const error = new Error('No se pudo cargar el menú. Reintentá sin perder el carrito.'); error.status = r.status; throw error; } return r.json(); },
         cart: () => carrito, locked: () => orderSubmissionPending || orderSubmissionSucceeded,
         onBusy: () => updateCheckoutActionState(),
-        onCommit: rows => { allProducts = rows; renderFiltered(rows); renderCart(); $('#loading').style.display = rows.length ? 'none' : 'block'; setOrderingEnabled(true); },
+        onCommit: rows => { allProducts = rows; renderFiltered(); renderCart(); setOrderingEnabled(true); },
         onError: message => toast(message),
       });
       await menuController.init();
@@ -1035,15 +1106,34 @@
       if (p) addToCart(p);
     }
 
-    function renderFiltered(list) {
-      const safeList = Array.isArray(list) ? list : [];
+    function renderFiltered() {
+      const term = searchInp.value.toLowerCase();
+      const safeList = allProducts.filter(p => String(p.nombre || '').toLowerCase().includes(term));
       if (!safeList.length) {
         $('#sectionPromos').style.display = 'none'; $('#sectionProds').style.display = 'none';
         $('#promosList').replaceChildren(); $('#prodsList').replaceChildren();
-        $('#loading').textContent = 'No hay productos disponibles.';
+        const emptySearch = allProducts.length > 0 && term !== '';
+        $('#loading').textContent = emptySearch
+          ? 'No encontramos productos para tu búsqueda'
+          : 'No hay productos disponibles.';
+        if (emptySearch) {
+          const clearButton = document.createElement('button');
+          clearButton.id = 'clearProductSearch';
+          clearButton.type = 'button';
+          clearButton.textContent = 'Limpiar búsqueda';
+          clearButton.style.cssText = 'display:block; margin:1rem auto 0';
+          clearButton.addEventListener('click', () => {
+            clearTimeout(searchTimeout);
+            searchInp.value = '';
+            renderFiltered();
+            searchInp.focus();
+          });
+          $('#loading').append(clearButton);
+        }
         $('#loading').style.display = 'block';
         return;
       }
+      $('#loading').style.display = 'none';
 
       const promos = safeList.filter(p => p.etiqueta && String(p.etiqueta).trim() !== '');
       const prods  = safeList.filter(p => !p.etiqueta || String(p.etiqueta).trim() === '');
@@ -1103,13 +1193,9 @@
 
     // Buscador
     let searchTimeout;
-    searchInp.addEventListener('input', (e) => {
+    searchInp.addEventListener('input', () => {
       clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => {
-        const term = e.target.value.toLowerCase();
-        const filtered = allProducts.filter(p => String(p.nombre || '').toLowerCase().includes(term));
-        renderFiltered(filtered);
-      }, 300);
+      searchTimeout = setTimeout(renderFiltered, 300);
     });
 
     function bindProductListEvents(containerId) {
@@ -1157,12 +1243,7 @@
       }
       renderCart();
 
-      // Actualizar visualmente botón
-      const term = searchInp.value.toLowerCase();
-      const list = term
-        ? allProducts.filter(x => x.nombre.toLowerCase().includes(term))
-        : allProducts;
-      renderFiltered(list);
+      renderFiltered();
     }
 
     function renderCart() {
@@ -1203,7 +1284,7 @@
       carrito[idx].cantidad += delta;
       if (carrito[idx].cantidad <= 0) carrito.splice(idx, 1);
       renderCart();
-      renderFiltered(allProducts);
+      renderFiltered();
     }
 
     function addToCartById(id) {
@@ -1224,6 +1305,7 @@
       const submitButton = formEl.querySelector('button[type="submit"]');
       const mobileSubmitButton = $('#mobSubmit');
       const phoneReady = normalizeArgentineNationalPhone(formEl.elements.telefono?.value || '').length === 10;
+      formEl.elements.telefono?.classList.toggle('phone-needs-attention', !phoneReady);
       const deliveryReady = ['cliente', 'direccion', 'ciudad'].every(name => String(formEl.elements[name]?.value || '').trim());
       const canSubmit = tenantAuthorized
         && carrito.length > 0
@@ -1233,16 +1315,37 @@
         && !orderSubmissionPending
         && !menuController?.busy
         && !orderSubmissionSucceeded;
-      const totalText = currentCartTotal > 0 ? ARS.format(currentCartTotal) : '';
 
       if (submitButton) {
         submitButton.disabled = !canSubmit;
-        submitButton.textContent = totalText ? `Confirmar pedido · ${totalText}` : 'Confirmar pedido';
+        if (!orderSubmissionPending && !orderSubmissionSucceeded) submitButton.textContent = 'Confirmar pedido';
       }
       if (mobileSubmitButton) {
-        mobileSubmitButton.disabled = !canSubmit;
-        mobileSubmitButton.textContent = totalText ? `Confirmar · ${totalText}` : 'Confirmar';
+        const canNavigate = tenantAuthorized && carrito.length > 0 && !phoneLookupPending
+          && !orderSubmissionPending && !orderSubmissionSucceeded && !menuController?.busy;
+        mobileSubmitButton.disabled = !canNavigate;
+        if (!orderSubmissionPending && !orderSubmissionSucceeded) mobileSubmitButton.textContent = canSubmit
+          ? 'Confirmar pedido'
+          : 'Ver carrito';
       }
+      for (const button of [submitButton, mobileSubmitButton]) {
+        if (!button) continue;
+        button.classList.toggle('checkout-ready-pulse', !!canSubmit);
+        button.classList.toggle('checkout-pending', orderSubmissionPending && !orderSubmissionSucceeded);
+        button.classList.toggle('checkout-confirmed', orderSubmissionSucceeded);
+        button.setAttribute('aria-busy', String(orderSubmissionPending && !orderSubmissionSucceeded));
+        if (canSubmit && !checkoutWasReady) {
+          button.classList.remove('checkout-ready-pulse');
+          void button.offsetWidth;
+          button.classList.add('checkout-ready-pulse');
+        }
+        if (orderSubmissionSucceeded) button.textContent = '✓ Pedido confirmado';
+        else if (orderSubmissionPending && !button.querySelector('.checkout-spinner')) {
+          button.innerHTML = '<span class="checkout-spinner" aria-hidden="true"></span>Enviando…';
+        }
+      }
+      checkoutWasReady = !!canSubmit;
+      return canSubmit;
     }
 
     // --- 4. FORMULARIO ---
@@ -1306,7 +1409,7 @@
     async function lookupContactByPhone(digits) {
       const sequence = ++phoneLookupSequence;
       phoneLookupPending = true;
-      phoneLookupStatus.textContent = 'Buscando tu última dirección…';
+      phoneLookupStatus.textContent = 'Buscando tus datos…';
       updateCheckoutActionState();
       try {
         const url = '/public/contacto?empresa_id=' + encodeURIComponent(empresa_id);
@@ -1315,28 +1418,49 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ telefono: buildTelefonoDB(digits) }),
         });
-        const data = response.ok ? await response.json() : null;
+        if (!response.ok) throw new Error('Contact lookup HTTP failure');
+        const data = await response.json();
         if (sequence !== phoneLookupSequence) return;
         phoneLookupPending = false;
-        if (data?.found && data.contacto?.id && data.contacto?.direccion) {
+        if (!data || Array.isArray(data) || typeof data !== 'object'
+          || (Object.hasOwn(data, 'ok') && data.ok !== true)
+          || typeof data.found !== 'boolean') {
+          throw new Error('Invalid contact lookup contract');
+        }
+        const contact = data.contacto;
+        if (data.found && (!contact || typeof contact !== 'object' || Array.isArray(contact)
+          || !['number', 'string'].includes(typeof contact.id)
+          || !/^\d+$/.test(String(contact.id)) || Number(contact.id) <= 0
+          || typeof contact.direccion !== 'string' || !contact.direccion.trim())) {
+          throw new Error('Invalid recovered contact');
+        }
+        if (data.found) {
+          telInput.classList.add('phone-client-recognized');
+          $('#phoneFormatStatus').innerHTML = '<span aria-hidden="true">✓</span> Cliente reconocido';
+          $('#phoneFormatStatus').hidden = false;
           showRecoveredAddress(data.contacto);
           return;
         }
         recoveredContact = null;
         showManualDeliveryForm();
-        phoneLookupStatus.textContent = 'No encontramos una dirección anterior. Completá los datos de entrega.';
+        phoneLookupStatus.textContent = 'Cliente nuevo · Completá tus datos de entrega';
       } catch (err) {
         if (sequence !== phoneLookupSequence) return;
         phoneLookupPending = false;
         console.error('Error consultando contacto', err);
         recoveredContact = null;
         showManualDeliveryForm();
-        phoneLookupStatus.textContent = 'No pudimos consultar el historial. Completá los datos de entrega.';
+        phoneLookupStatus.textContent = 'No pudimos consultar tus datos. Podés completarlos manualmente';
       }
     }
 
     telInput.addEventListener('input', () => {
+      telInput.classList.remove('phone-attention-pulse');
       const digits = normalizeArgentineNationalPhone(telInput.value);
+      // Recognition belongs only to the current completed lookup, not phone format or ownership.
+      telInput.classList.remove('phone-client-recognized');
+      $('#phoneFormatStatus').hidden = true;
+      $('#phoneFormatStatus').replaceChildren();
       phoneLookupSequence += 1;
       phoneLookupPending = false;
       recoveredContact = null;
@@ -1384,7 +1508,22 @@
     });
 
     $('#mobSubmit').addEventListener('click', () => {
-      formEl.requestSubmit();
+      const canSubmit = updateCheckoutActionState();
+      if ($('#mobSubmit').disabled) return;
+      if (canSubmit) formEl.requestSubmit();
+      else {
+        const target = normalizeArgentineNationalPhone(telInput.value).length === 10 ? cartEl : telInput;
+        target.focus({ preventScroll: true });
+        if (target === telInput) {
+          telInput.classList.remove('phone-attention-pulse');
+          void telInput.offsetWidth;
+          telInput.classList.add('phone-attention-pulse');
+        }
+        // Scroll the page once; smooth ancestor scrolling can race rapid taps/layout updates.
+        const top = window.scrollY + target.getBoundingClientRect().top
+          - $('header').getBoundingClientRect().height - 16;
+        window.scrollTo({ top, behavior: 'instant' });
+      }
     });
 
     formEl.addEventListener('submit', async (ev) => {
@@ -1446,14 +1585,9 @@
       if (payload.latitud == null) delete payload.latitud;
       if (payload.longitud == null) delete payload.longitud;
 
-      const submitBtn = formEl.querySelector('button[type="submit"]');
-      const mobileSubmitBtn = $('#mobSubmit');
-      const originalText = submitBtn ? submitBtn.textContent : '';
       orderSubmissionPending = true;
       menuController?.render();
       updateCheckoutActionState();
-      if (submitBtn) submitBtn.textContent = 'Enviando pedido... 🚀';
-      if (mobileSubmitBtn) mobileSubmitBtn.textContent = 'Enviando...';
 
       try {
         const r = await fetch('/public/pedidos?' + publicTenantParams.toString(), {
@@ -1474,6 +1608,7 @@
         }
 
         orderSubmissionSucceeded = true;
+        updateCheckoutActionState();
         toast('✅ Pedido enviado con éxito' + (PediVoyMenu.acceptedDate(res.pedido) ? ' · Entrega: ' + PediVoyMenu.acceptedDate(res.pedido) : ''));
 
         if (res.pedido && res.pedido.id) {
@@ -1500,9 +1635,6 @@
       } finally {
         orderSubmissionPending = false;
         menuController?.render();
-        if (submitBtn) {
-          submitBtn.textContent = originalText || 'Confirmar pedido';
-        }
         updateCheckoutActionState();
       }
     });

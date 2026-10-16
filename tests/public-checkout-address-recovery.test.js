@@ -176,8 +176,10 @@ test('checkout habilita confirmar con carrito y entrega válidos, muestra total 
       await page.waitForFunction(() => !document.querySelector('#form button[type="submit"]').disabled);
       assert.equal(await page.$eval('#form button[type="submit"]', el => el.disabled), false);
       assert.equal(await page.$eval('#mobSubmit', el => el.disabled), false);
-      assert.match(await page.$eval('#form button[type="submit"]', el => el.textContent), /\$\s*100/);
-      assert.match(await page.$eval('#mobSubmit', el => el.textContent), /\$\s*100/);
+      assert.equal(await page.$eval('#form button[type="submit"]', el => el.textContent.trim()), 'Confirmar pedido');
+      assert.equal(await page.$eval('#mobSubmit', el => el.textContent.trim()), 'Confirmar pedido');
+      assert.match(await page.$eval('#total', el => el.textContent), /\$\s*100/);
+      assert.match(await page.$eval('#mobTotal', el => el.textContent), /\$\s*100/);
 
       await page.$eval('#form', form => form.requestSubmit());
       await new Promise(resolve => setTimeout(resolve, 250));
