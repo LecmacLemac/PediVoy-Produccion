@@ -96,6 +96,7 @@
     .filters-card :focus-visible { outline:2px solid var(--primary); outline-offset:3px; }
     .filters-card [aria-invalid="true"] { border-color:var(--danger); }
     #filtrosAyuda, #resultadosEstado { color:var(--text-muted); line-height:1.6; overflow-wrap:anywhere; }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
     .btn:disabled { opacity:.55; cursor:wait; }
     .kpi-scope { font-size:.75rem; color:var(--text-muted); }
     @media(max-width:480px) {
@@ -373,8 +374,8 @@
     </button>
   </div>
 
-  <p id="filtrosAyuda">Buscá en todos los registros. Aplicá con Enter o Filtrar. Fechas inclusivas, horario de Argentina.</p>
-  <p id="resultadosEstado" role="status" aria-live="polite"></p>
+  <p id="filtrosAyuda" class="sr-only">Buscá en todos los registros. Aplicá con Enter o Filtrar. Fechas inclusivas, horario de Argentina.</p>
+  <p id="resultadosEstado" class="sr-only" role="status" aria-live="polite"></p>
   <div class="table-container">
     <div class="table-responsive">
       <table>
@@ -552,12 +553,18 @@
     return true;
   }
 
+  function setResultadosEstado(message, visible = false) {
+    const status = $('#resultadosEstado');
+    status.classList.toggle('sr-only', !visible);
+    status.textContent = message;
+  }
+
   async function onEmpresaFilterChange() {
     invalidateList();
     currentRows = [];
     updateKPIs(currentRows);
     $('#rows').innerHTML = '<tr><td colspan="9">Cargando filtros de la empresa seleccionada…</td></tr>';
-    $('#resultadosEstado').textContent = '0 registros cargados · Actualizando empresa y cuentas…';
+    setResultadosEstado('0 registros cargados · Actualizando empresa y cuentas…');
     const generation = listGeneration;
     $('#fCuenta').value = '';
     $('#fCuenta').innerHTML = '<option value="">Cargando cuentas…</option>';
@@ -575,7 +582,7 @@
   document.querySelector('.filters-card').addEventListener('input', event => {
     if (!event.target.matches('input, select')) return;
     invalidateList();
-    $('#resultadosEstado').textContent = `${currentRows.length} registros cargados · Filtros modificados; presioná Filtrar para aplicarlos.`;
+    setResultadosEstado(`${currentRows.length} registros cargados · Filtros modificados; presioná Filtrar para aplicarlos.`);
   });
 
   function validateFilters() {
@@ -591,7 +598,7 @@
       message = 'El rango es inválido: Desde debe ser anterior o igual a Hasta.';
     }
     if ($('#fBuscar').value.trim().length > 120) message = 'La búsqueda admite hasta 120 caracteres.';
-    if (message) $('#resultadosEstado').textContent = message;
+    if (message) setResultadosEstado(message, true);
     return !message;
   }
 
@@ -621,7 +628,7 @@
     const signal = listController.signal;
     $('#btnVerMas').disabled = true;
     $('#rows').setAttribute('aria-busy', 'true');
-    $('#resultadosEstado').textContent = `${currentRows.length} registros cargados · Cargando…`;
+    setResultadosEstado(`${currentRows.length} registros cargados · Cargando…`);
     const batches = await Promise.all(sources.filter(s => s.enabled && !sourcePages[s.type].exhausted).map(async source => {
       const query = new URLSearchParams(params), page = sourcePages[source.type];
       if (page.cursor) {
@@ -659,7 +666,7 @@
     $('#btnVerMas').disabled = false;
     $('#btnVerMas').textContent = errors.length ? 'Reintentar carga' : 'Ver más';
     $('#btnVerMas').style.display = hasMoreRows ? 'inline-flex' : 'none';
-    $('#resultadosEstado').textContent = `${currentRows.length} registros cargados${errors.length ? ' · No se pudo completar la carga: ' + errors.join('; ') + '. Reintentá sin perder la página.' : ''}`;
+    setResultadosEstado(errors.length ? 'No se pudo completar la carga: ' + errors.join('; ') + '. Reintentá sin perder la página.' : `${currentRows.length} registros cargados`, errors.length > 0);
     if (!sources.some(source => source.enabled)) $('#resultadosEstado').textContent += ' · Esta combinación de Tipo, Estado y Cuenta no tiene registros compatibles. Cambiá los filtros.';
     updateKPIs(currentRows); renderTable(currentRows);
     if (errors.length && !currentRows.length) $('#rows').innerHTML = '<tr><td colspan="9">No se pudieron cargar los registros. Reintentá la carga.</td></tr>';

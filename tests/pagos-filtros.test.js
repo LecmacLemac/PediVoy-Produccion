@@ -52,6 +52,70 @@ async function fixture(run) {
   } finally {if(browser)await browser.close();held.splice(0).forEach(r=>r());server.closeAllConnections();await new Promise(r=>server.close(r));}
 }
 
+async function assertCompactStatuses(page) {
+  const state = await page.evaluate(() => {
+    const hidden = ['filtrosAyuda','resultadosEstado'].map(id => {
+      const node = document.getElementById(id), style = getComputedStyle(node), box = node.getBoundingClientRect();
+      return {position:style.position,clip:style.clip,width:box.width,height:box.height,margin:style.margin,display:style.display,visibility:style.visibility};
+    });
+    const filters = document.querySelector('.filters-card'), table = document.querySelector('.table-container');
+    return {hidden,gap:table.getBoundingClientRect().top-filters.getBoundingClientRect().bottom,expectedGap:parseFloat(getComputedStyle(filters).marginBottom)+(parseFloat(getComputedStyle(filters.parentElement).rowGap)||0)};
+  });
+  for (const status of state.hidden) {
+    assert.equal(status.position,'absolute','Ayuda y contador deben salir del flujo sin dejar renglones vacíos');
+    assert.ok(status.width<=1 && status.height<=1,'Texto sólo para lectores de pantalla');
+    assert.notEqual(status.clip,'auto','El texto debe quedar recortado visualmente');
+    assert.equal(status.display,'block');assert.equal(status.visibility,'visible','No ocultar la descripción ni el live region a accesibilidad');
+  }
+  assert.ok(Math.abs(state.gap-state.expectedGap)<1,'Sólo queda el espaciado normal entre filtros y tabla');
+}
+
+test('ayuda y contador son accesibles sin texto ni espacio visual al cargar, paginar y filtrar',async()=>fixture(async({page,reads,release})=>{
+  for (const width of [1280,390]) {
+    await page.setViewport({width,height:844});await assertCompactStatuses(page);
+  }
+  assert.equal(await page.$eval('#fBuscar',n=>n.getAttribute('aria-describedby')),'filtrosAyuda');
+  assert.deepEqual(await page.$eval('#resultadosEstado',n=>[n.getAttribute('role'),n.getAttribute('aria-live')]),['status','polite']);
+  assert.match(await page.$eval('#filtrosAyuda',n=>n.textContent),/Buscá en todos los registros/);
+  await page.evaluate(()=>cargarMas());await assertCompactStatuses(page);
+  assert.match(await page.$eval('#resultadosEstado',n=>n.textContent),/203 registros cargados/);
+  const before=reads.length;await page.type('#fBuscar','lenta');
+  assert.equal(reads.length,before);await assertCompactStatuses(page);
+  await page.focus('#fBuscar');await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>listBusy);await assertCompactStatuses(page);
+  await page.waitForFunction(()=>document.querySelector('#rows').getAttribute('aria-busy')==='true');
+  // Wait until all synthetic sources are held before releasing the response.
+  const deadline=Date.now()+3000;
+  while(reads.length<before+3 && Date.now()<deadline) await new Promise(r=>setTimeout(r,10));
+  assert.equal(reads.length,before+3,'Las tres fuentes sintéticas recibieron la búsqueda');
+  release();await page.waitForFunction(()=>!listBusy&&currentRows.length===3);
+  await assertCompactStatuses(page);
+  assert.match(await page.$eval('.kpi-grid',n=>n.textContent),/de registros cargados/);
+}));
+
+test('errores de carga siguen visibles sin contador y vuelven a sr-only al recuperarse',async()=>fixture(async({page,failures,paths,settings})=>{
+  for (const status of [503,403]) {
+    settings.status=status;failures.add(paths[0]);
+    await page.evaluate(()=>loadPagos());
+    const error=await page.$eval('#resultadosEstado',n=>({text:n.textContent,position:getComputedStyle(n).position,height:n.getBoundingClientRect().height,clip:getComputedStyle(n).clip}));
+    assert.equal(error.position,'static','Una fuente fallida debe mostrar su error aunque otras carguen');
+    assert.ok(error.height>1);assert.equal(error.clip,'auto');
+    assert.match(error.text,new RegExp(`Transferencias: HTTP ${status}`));
+    assert.doesNotMatch(error.text,/registros cargados/,'El error visible no lleva prefijo contador');
+    assert.equal(await page.evaluate(()=>currentRows.length),2);
+    failures.clear();await page.evaluate(()=>cargarMas());await assertCompactStatuses(page);
+  }
+  paths.forEach(p=>failures.add(p));await page.evaluate(()=>loadPagos());
+  assert.equal(await page.$eval('#resultadosEstado',n=>getComputedStyle(n).position),'static');
+  assert.match(await page.$eval('#rows',n=>n.textContent),/No se pudieron cargar/);
+  failures.clear();await page.evaluate(()=>loadPagos());await assertCompactStatuses(page);
+  await page.$eval('#fDesde',n=>n.value='2026-10-15');await page.$eval('#fHasta',n=>n.value='2026-10-01');
+  await page.evaluate(()=>loadPagos());
+  assert.equal(await page.$eval('#resultadosEstado',n=>getComputedStyle(n).position),'static','La validación de fechas tampoco desaparece');
+  assert.match(await page.$eval('#resultadosEstado',n=>n.textContent),/rango es inválido/);
+  await page.type('#fBuscar','nueva');await assertCompactStatuses(page);
+}));
+
 test('paginación por fuente conserva cursor exacto, no repite agotadas y reintenta errores HTTP',async()=>fixture(async({page,reads,failures,paths})=>{
   assert.equal(await page.evaluate(()=>currentRows.length),202);
   failures.add(paths[0]);
